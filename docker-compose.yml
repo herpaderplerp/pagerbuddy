@@ -1,0 +1,60 @@
+services:
+  app:
+    build: .
+    image: pagerbuddy:latest
+    command: uvicorn pagerbuddy.main:app --host 0.0.0.0 --port 8000 --reload
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://pagerbuddy:pagerbuddy@db:5432/pagerbuddy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: .
+    image: pagerbuddy:latest
+    command: python -m pagerbuddy.worker
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://pagerbuddy:pagerbuddy@db:5432/pagerbuddy
+    volumes:
+      - ./src:/app/src
+    depends_on:
+      db:
+        condition: service_healthy
+
+  scheduler:
+    build: .
+    image: pagerbuddy:latest
+    command: python -m pagerbuddy.scheduler
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://pagerbuddy:pagerbuddy@db:5432/pagerbuddy
+    volumes:
+      - ./src:/app/src
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pagerbuddy
+      POSTGRES_PASSWORD: pagerbuddy
+      POSTGRES_DB: pagerbuddy
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pagerbuddy -d pagerbuddy"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres_data:

@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PagerBuddy Admin</title>
+    <link rel="stylesheet" href="/dashboard/assets/styles.css?v=3" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="/dashboard" aria-label="PagerBuddy dashboard">
+          <span class="brand-mark">PB</span>
+          <span>
+            <strong>PagerBuddy</strong>
+            <small>Admin</small>
+          </span>
+        </a>
+        <nav class="nav" aria-label="Dashboard sections">
+          <button class="nav-item active" data-view="overview" type="button"><span aria-hidden="true">⌂</span> Overview</button>
+          <button class="nav-item" data-view="incidents" type="button"><span aria-hidden="true">!</span> Incidents</button>
+          <button class="nav-item" data-view="people" type="button"><span aria-hidden="true">○</span> People</button>
+          <button class="nav-item" data-view="services" type="button"><span aria-hidden="true">◇</span> Services</button>
+          <button class="nav-item" data-view="schedules" type="button"><span aria-hidden="true">◷</span> Schedules</button>
+          <button class="nav-item" data-view="policies" type="button"><span aria-hidden="true">⇧</span> Policies</button>
+        </nav>
+      </aside>
+
+      <main class="content">
+        <header class="topbar">
+          <div>
+            <h1>On-call operations</h1>
+            <p id="last-refresh">Loading PagerBuddy state</p>
+          </div>
+          <div class="topbar-actions">
+            <a class="icon-button" href="/docs" title="Open API docs" aria-label="Open API docs">?</a>
+            <button class="icon-button" id="refresh-button" type="button" title="Refresh" aria-label="Refresh">↻</button>
+          </div>
+        </header>
+
+        <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+        <section class="view active" id="view-overview" aria-labelledby="overview-title">
+          <div class="section-heading">
+            <h2 id="overview-title">Overview</h2>
+            <button class="primary-button" data-view-target="incidents" type="button"><span aria-hidden="true">+</span> Trigger incident</button>
+          </div>
+          <div class="metric-grid" id="metric-grid"></div>
+          <div class="split-layout">
+            <section class="panel">
+              <div class="panel-heading">
+                <h3>Open incidents</h3>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Incident</th><th>Status</th><th>Priority</th><th>Service</th><th>Created</th></tr>
+                  </thead>
+                  <tbody id="overview-incidents"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <h3>Configuration health</h3>
+              </div>
+              <div id="config-health" class="health-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="view-incidents" aria-labelledby="incidents-title">
+          <div class="section-heading">
+            <h2 id="incidents-title">Incidents</h2>
+            <button class="primary-button" id="create-incident-submit" form="incident-form" type="submit"><span aria-hidden="true">+</span> Create</button>
+          </div>
+          <div class="split-layout wide-left">
+            <section class="panel">
+              <div class="panel-heading">
+                <h3>Incident queue</h3>
+                <select id="incident-filter" aria-label="Incident status filter">
+                  <option value="open">Open</option>
+                  <option value="all">All</option>
+                  <option value="triggered">Triggered</option>
+                  <option value="acknowledged">Acknowledged</option>
+                  <option value="resolved">Resolved</option>
+                </select>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Title</th><th>Status</th><th>Priority</th><th>Assignee</th><th></th></tr>
+                  </thead>
+                  <tbody id="incident-table"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <h3>Manual trigger</h3>
+              </div>
+              <form id="incident-form" class="form-grid">
+                <label>Service<select name="service_id" data-source="services" required></select></label>
+                <label>Priority<select name="priority"><option>P1</option><option selected>P2</option><option>P3</option><option>P4</option></select></label>
+                <label class="span-2">Title<input name="title" value="Manual incident" required /></label>
+                <label>Caller ID<input name="caller_id" placeholder="+15551234567" /></label>
+                <label>Recording URL<input name="recording_url" placeholder="https://api.twilio.com/..." /></label>
+                <label class="span-2">Transcription<textarea name="transcription" rows="4"></textarea></label>
+                <label class="check-row"><input name="start_escalation" type="checkbox" checked /> Start escalation</label>
+              </form>
+            </section>
+          </div>
+          <section class="panel detail-panel" id="incident-detail"></section>
+        </section>
+
+        <section class="view" id="view-people" aria-labelledby="people-title">
+          <div class="section-heading">
+            <h2 id="people-title">People</h2>
+            <button class="primary-button" form="user-form" type="submit"><span aria-hidden="true">+</span> Add user</button>
+          </div>
+          <div class="split-layout">
+            <section class="panel">
+              <div class="panel-heading"><h3>Users</h3></div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Name</th><th>Role</th><th>Email</th><th>Phone</th><th>Actions</th></tr></thead>
+                  <tbody id="user-table"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading"><h3>New user</h3></div>
+              <form id="user-form" class="form-grid">
+                <label>Name<input name="name" required /></label>
+                <label>Role<select name="role"><option>responder</option><option>admin</option><option>stakeholder</option></select></label>
+                <label>Email<input name="email" type="email" required /></label>
+                <label>Phone<input name="phone_number" placeholder="+15551234567" required /></label>
+                <label>Timezone<input name="timezone" value="America/Toronto" required /></label>
+                <label>Channels<select name="channels"><option value="phone_call,sms,email">Phone, SMS, email</option><option value="sms,email">SMS, email</option><option value="email">Email only</option></select></label>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="view-services" aria-labelledby="services-title">
+          <div class="section-heading">
+            <h2 id="services-title">Services</h2>
+            <button class="primary-button" form="service-form" type="submit"><span aria-hidden="true">+</span> Add service</button>
+          </div>
+          <div class="split-layout">
+            <section class="panel">
+              <div class="panel-heading"><h3>Services</h3></div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Name</th><th>Inbound number</th><th>Policy</th><th>Actions</th></tr></thead>
+                  <tbody id="service-table"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading"><h3>New service</h3></div>
+              <form id="service-form" class="form-grid">
+                <label>Name<input name="name" required /></label>
+                <label>Inbound number<input name="inbound_phone_number" placeholder="+15557654321" required /></label>
+                <label class="span-2">Escalation policy<select name="escalation_policy_id" data-source="policies" required></select></label>
+                <label class="span-2">Description<textarea name="description" rows="3"></textarea></label>
+              </form>
+            </section>
+          </div>
+          <section class="panel">
+            <div class="panel-heading"><h3>Stakeholders</h3></div>
+            <form id="stakeholder-form" class="form-grid four">
+              <label>Service<select name="service_id" data-source="services" required></select></label>
+              <label>Stakeholder<select name="user_id" data-source="stakeholders" required></select></label>
+              <button class="secondary-button" data-stakeholder-action="subscribe" type="submit">Subscribe</button>
+              <button class="danger-button" data-stakeholder-action="unsubscribe" type="submit">Unsubscribe</button>
+            </form>
+          </section>
+        </section>
+
+        <section class="view" id="view-schedules" aria-labelledby="schedules-title">
+          <div class="section-heading">
+            <h2 id="schedules-title">Schedules</h2>
+            <button class="primary-button" form="schedule-form" type="submit"><span aria-hidden="true">+</span> Add schedule</button>
+          </div>
+          <div class="split-layout">
+            <section class="panel">
+              <div class="panel-heading"><h3>Schedules</h3></div>
+              <div id="schedule-list" class="item-list"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading"><h3>New schedule</h3></div>
+              <form id="schedule-form" class="form-grid">
+                <label>Name<input name="name" required /></label>
+                <label>Timezone<input name="timezone" value="America/Toronto" required /></label>
+                <label class="span-2">Layers JSON<textarea name="layers" rows="8" spellcheck="false">[]</textarea></label>
+              </form>
+            </section>
+          </div>
+          <section class="panel">
+            <div class="panel-heading"><h3>Create override</h3></div>
+            <form id="override-form" class="form-grid four">
+              <label>Schedule<select name="schedule_id" data-source="schedules" required></select></label>
+              <label>Covering user<select name="override_user_id" data-source="users" required></select></label>
+              <label>Created by<select name="created_by" data-source="users" required></select></label>
+              <label>Reason<input name="reason" placeholder="vacation" /></label>
+              <label>Start<input name="start" type="datetime-local" required /></label>
+              <label>End<input name="end" type="datetime-local" required /></label>
+              <button class="secondary-button" type="submit"><span aria-hidden="true">✓</span> Save override</button>
+            </form>
+          </section>
+        </section>
+
+        <section class="view" id="view-policies" aria-labelledby="policies-title">
+          <div class="section-heading">
+            <h2 id="policies-title">Policies</h2>
+            <button class="primary-button" form="policy-form" type="submit"><span aria-hidden="true">+</span> Add policy</button>
+          </div>
+          <div class="split-layout">
+            <section class="panel">
+              <div class="panel-heading"><h3>Escalation policies</h3></div>
+              <div id="policy-list" class="item-list"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading"><h3>New policy</h3></div>
+              <form id="policy-form" class="form-grid">
+                <label>Name<input name="name" required /></label>
+                <label>Catchall user<select name="catchall_user_id" data-source="users"></select></label>
+                <label>Repeat<select name="repeat_enabled"><option value="false">Disabled</option><option value="true">Enabled</option></select></label>
+                <label>Repeat count<input name="repeat_count" type="number" min="0" value="0" /></label>
+                <label class="span-2">Steps JSON<textarea name="steps" rows="9" spellcheck="false">[]</textarea></label>
+              </form>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/dashboard/assets/app.js?v=3"></script>
+  </body>
+</html>

@@ -1,0 +1,126 @@
+# PagerBuddy Agent Notes
+
+Keep this file updated whenever project structure, commands, deployment assumptions, auth, or external integrations change.
+
+## Project Shape
+
+PagerBuddy is a FastAPI service for Twilio-based on-call incident management.
+
+- App package: `src/pagerbuddy`
+- Admin UI: `src/pagerbuddy/ui`
+- Tests: `tests`
+- Container orchestration: `docker-compose.yml`
+- Runtime config template: `.env.example`
+- Local secrets: `.env` is ignored and must not be committed
+
+## Run And Verify
+
+Use the existing virtualenv for local checks:
+
+```bash
+.venv/bin/pytest -q
+python3 -m compileall src tests
+PYTHONPATH=src .venv/bin/python -c "from pagerbuddy.main import app; print(app.title, len(app.routes))"
+```
+
+Rootless Podman is the active local container runtime:
+
+```bash
+podman compose up -d
+podman compose ps
+podman compose logs --tail=80 app worker scheduler db
+```
+
+The dashboard is served at:
+
+```text
+http://localhost:8000/dashboard
+```
+
+## Authentication
+
+Admin surfaces require HTTP Basic auth:
+
+- `/dashboard`
+- `/docs`
+- `/openapi.json`
+- admin REST paths such as `/users`, `/services`, `/incidents`
+
+Public paths:
+
+- `/healthz`
+- `/webhooks/twilio/...`
+- `/dashboard/assets/...`
+- `/incident-actions/...`
+
+If `ADMIN_PASSWORD` is blank, admin routes reject all credentials. The current local ignored `.env` may contain development credentials, but do not copy secrets into tracked files.
+
+## Twilio And ngrok
+
+Twilio webhook validation is enabled by default with:
+
+```env
+TWILIO_VALIDATE_REQUESTS=true
+```
+
+`PUBLIC_BASE_URL` must exactly match the public webhook URL configured in Twilio, because Twilio signs the external URL.
+
+Current local development uses ngrok. The tunnel is intended to run detached in a screen session:
+
+```bash
+screen -ls
+screen -r pagerbuddy-ngrok
+screen -S pagerbuddy-ngrok -X quit
+```
+
+When the ngrok URL changes:
+
+1. Update ignored `.env` `PUBLIC_BASE_URL`.
+2. Recreate app and worker:
+
+   ```bash
+   podman compose up -d app worker
+   ```
+
+3. Update the Twilio number callbacks:
+   - Voice: `<PUBLIC_BASE_URL>/webhooks/twilio/voice`
+   - SMS: `<PUBLIC_BASE_URL>/webhooks/twilio/sms`
+
+The local Twilio trial guard restricts phone/SMS notifications to `TWILIO_TRIAL_ALLOWED_NUMBER` when configured.
+
+## Secrets
+
+Never commit secrets. `.env` is ignored. Keep `.env.example` limited to blank/example values only.
+
+Ignored local artifacts include:
+
+- `.env`
+- `.venv/`
+- `.pytest_cache/`
+- `__pycache__/`
+- `*.egg-info/`
+- `.DS_Store`
+- `pagerbuddy.db`
+
+## Implementation Notes
+
+- Database tables are currently created with `Base.metadata.create_all`; production should move to Alembic.
+- The worker processes escalation timers.
+- The scheduler checks schedule gaps and records/sends admin alerts.
+- Twilio webhooks are under `src/pagerbuddy/twilio_webhooks.py`.
+- Signature validation is in `src/pagerbuddy/twilio_security.py`.
+- Notification dispatch and trial-recipient checks are in `src/pagerbuddy/notifications.py`.
+- Admin dashboard JavaScript calls the same REST API and must keep using same-origin authenticated requests.
+- The dashboard is intended to be the primary management surface. When admin REST endpoints are added or changed, expose the action in `src/pagerbuddy/ui` as well.
+- Current dashboard management coverage includes create/list/update/delete for users, services, schedules, and escalation policies; stakeholder subscribe/unsubscribe; schedule gap checks; and incident create/update/escalation/acknowledge/resolve/reopen/reassign/merge/note/timeline actions.
+
+## Current Gaps From Original Spec
+
+Known remaining work includes:
+
+- Full role-based access control by user role.
+- In-flight Twilio outbound call cancellation after acknowledgement.
+- SMS ambiguity resolution by incident ID.
+- Time-based email action-token expiry.
+- Local recording download/storage adapter.
+- Alembic migrations.

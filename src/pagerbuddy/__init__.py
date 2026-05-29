@@ -1,0 +1,2 @@
+"""PagerBuddy application package."""
+
