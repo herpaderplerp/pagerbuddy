@@ -13,3 +13,4 @@ __pycache__
 *.dump
 *.sql
 postgres_data/
+recordings/

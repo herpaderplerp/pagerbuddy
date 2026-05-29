@@ -209,68 +209,70 @@ def dispatch_notification(
     escalation_step: int,
     attempt_number: int,
     client: NotificationClient | None = None,
-) -> NotificationAttempt:
+) -> list[NotificationAttempt]:
     channels = preferred_channels(user, incident)
     if not channels:
         raise ValueError(f"user {user.id} has no usable notification channels")
-    channel = channels[(attempt_number - 1) % len(channels)]
-    attempt = NotificationAttempt(
-        incident_id=incident.id,
-        user_id=user.id,
-        channel=channel,
-        attempt_number=attempt_number,
-        escalation_step=escalation_step,
-    )
-    db.add(attempt)
-    db.flush()
 
     notifier = client or NotificationClient()
-    try:
-        if channel == NotificationChannel.phone_call:
-            result = notifier.send_phone_call(incident, user, attempt.id)
-        elif channel == NotificationChannel.sms:
-            result = notifier.send_sms(incident, user)
-        else:
-            ack_token = IncidentActionToken(incident_id=incident.id, user_id=user.id, action="acknowledge")
-            resolve_token = IncidentActionToken(incident_id=incident.id, user_id=user.id, action="resolve")
-            db.add_all([ack_token, resolve_token])
-            db.flush()
-            result = notifier.send_email(
-                incident,
-                user,
-                escalation_step,
-                ack_url=f"{notifier.settings.public_base_url}/incident-actions/{ack_token.token}",
-                resolve_url=f"{notifier.settings.public_base_url}/incident-actions/{resolve_token.token}",
+    attempts: list[NotificationAttempt] = []
+    for channel in channels:
+        attempt = NotificationAttempt(
+            incident_id=incident.id,
+            user_id=user.id,
+            channel=channel,
+            attempt_number=attempt_number,
+            escalation_step=escalation_step,
+        )
+        db.add(attempt)
+        db.flush()
+        try:
+            if channel == NotificationChannel.phone_call:
+                result = notifier.send_phone_call(incident, user, attempt.id)
+            elif channel == NotificationChannel.sms:
+                result = notifier.send_sms(incident, user)
+            else:
+                ack_token = IncidentActionToken(incident_id=incident.id, user_id=user.id, action="acknowledge")
+                resolve_token = IncidentActionToken(incident_id=incident.id, user_id=user.id, action="resolve")
+                db.add_all([ack_token, resolve_token])
+                db.flush()
+                result = notifier.send_email(
+                    incident,
+                    user,
+                    escalation_step,
+                    ack_url=f"{notifier.settings.public_base_url}/incident-actions/{ack_token.token}",
+                    resolve_url=f"{notifier.settings.public_base_url}/incident-actions/{resolve_token.token}",
+                )
+            attempt.status = NotificationStatus.delivered
+            attempt.provider_message_id = result.provider_message_id
+            record_event(
+                db,
+                incident.id,
+                TimelineEventType.notification_sent,
+                {
+                    "user_id": str(user.id),
+                    "channel": channel.value,
+                    "attempt_number": attempt_number,
+                    "escalation_step": escalation_step,
+                },
             )
-        attempt.status = NotificationStatus.delivered
-        attempt.provider_message_id = result.provider_message_id
-        record_event(
-            db,
-            incident.id,
-            TimelineEventType.notification_sent,
-            {
-                "user_id": str(user.id),
-                "channel": channel.value,
-                "attempt_number": attempt_number,
-                "escalation_step": escalation_step,
-            },
-        )
-    except Exception as exc:
-        attempt.status = NotificationStatus.failed
-        attempt.error = str(exc)
-        record_event(
-            db,
-            incident.id,
-            TimelineEventType.notification_failed,
-            {
-                "user_id": str(user.id),
-                "channel": channel.value,
-                "attempt_number": attempt_number,
-                "escalation_step": escalation_step,
-                "error": str(exc),
-            },
-        )
-    return attempt
+        except Exception as exc:
+            attempt.status = NotificationStatus.failed
+            attempt.error = str(exc)
+            record_event(
+                db,
+                incident.id,
+                TimelineEventType.notification_failed,
+                {
+                    "user_id": str(user.id),
+                    "channel": channel.value,
+                    "attempt_number": attempt_number,
+                    "escalation_step": escalation_step,
+                    "error": str(exc),
+                },
+            )
+        attempts.append(attempt)
+    return attempts
 
 
 def dispatch_transcription_followup(

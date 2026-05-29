@@ -5,6 +5,7 @@ const state = {
   policies: [],
   incidents: [],
   scheduleGaps: {},
+  me: null,
   selectedIncidentId: null,
 };
 
@@ -42,6 +43,21 @@ function responders() {
 
 function channelValue(user) {
   return (user.notification_preferences?.channels || ["phone_call", "sms", "email"]).join(",");
+}
+
+function channelLabel(user) {
+  const labels = {
+    phone_call: "Voice",
+    sms: "SMS",
+    email: "Email",
+  };
+  return (user.notification_preferences?.channels || ["phone_call", "sms", "email"])
+    .map((channel) => labels[channel] || channel)
+    .join(", ");
+}
+
+function isAdmin() {
+  return state.me?.role === "admin";
 }
 
 function formatDate(value) {
@@ -84,14 +100,15 @@ async function api(path, options = {}) {
 }
 
 async function refreshData() {
-  const [users, services, schedules, policies, incidents] = await Promise.all([
+  const [me, users, services, schedules, policies, incidents] = await Promise.all([
+    api("/auth/me"),
     api("/users"),
     api("/services"),
     api("/schedules"),
     api("/escalation-policies"),
     api("/incidents"),
   ]);
-  Object.assign(state, { users, services, schedules, policies, incidents });
+  Object.assign(state, { me, users, services, schedules, policies, incidents });
   if (!incidents.some((incident) => incident.id === state.selectedIncidentId)) {
     state.selectedIncidentId = incidents[0]?.id ?? null;
   }
@@ -100,6 +117,7 @@ async function refreshData() {
 }
 
 function renderAll() {
+  renderSession();
   renderSelects();
   renderOverview();
   renderIncidents();
@@ -107,6 +125,13 @@ function renderAll() {
   renderServices();
   renderSchedules();
   renderPolicies();
+}
+
+function renderSession() {
+  $("#current-user").textContent = state.me ? ` - ${state.me.username} (${state.me.role})` : "";
+  $$("[data-admin-only]").forEach((element) => {
+    element.hidden = !isAdmin();
+  });
 }
 
 function renderSelects() {
@@ -333,19 +358,24 @@ function renderUsers() {
           (user) => `
             <tr>
               <td>${escapeHtml(user.name)}<br><small>${escapeHtml(user.timezone)}</small></td>
-              <td>${escapeHtml(user.role)}</td>
+              <td>${escapeHtml(user.role)}<br><small>${user.is_active ? "active" : "disabled"}</small></td>
               <td>${escapeHtml(user.email)}</td>
               <td>${escapeHtml(user.phone_number)}</td>
+              <td>${escapeHtml(channelLabel(user))}</td>
               <td>
-                <div class="row-actions">
-                  <button class="secondary-button compact-button" data-user-edit="${user.id}" type="button">Edit</button>
-                  <button class="danger-button compact-button" data-user-delete="${user.id}" type="button">Delete</button>
-                </div>
+                ${
+                  isAdmin()
+                    ? `<div class="row-actions">
+                        <button class="secondary-button compact-button" data-user-edit="${user.id}" type="button">Edit</button>
+                        <button class="danger-button compact-button" data-user-delete="${user.id}" type="button">Delete</button>
+                      </div>`
+                    : ""
+                }
               </td>
             </tr>`
         )
         .join("")
-    : '<tr><td colspan="5" class="empty">No users yet</td></tr>';
+    : '<tr><td colspan="6" class="empty">No users yet</td></tr>';
   $$("[data-user-edit]").forEach((button) => {
     button.addEventListener("click", () => editUser(state.users.find((user) => user.id === button.dataset.userEdit)));
   });
@@ -364,10 +394,14 @@ function renderServices() {
               <td>${escapeHtml(service.inbound_phone_number)}</td>
               <td>${escapeHtml(policyName(service.escalation_policy_id))}</td>
               <td>
-                <div class="row-actions">
-                  <button class="secondary-button compact-button" data-service-edit="${service.id}" type="button">Edit</button>
-                  <button class="danger-button compact-button" data-service-delete="${service.id}" type="button">Delete</button>
-                </div>
+                ${
+                  isAdmin()
+                    ? `<div class="row-actions">
+                        <button class="secondary-button compact-button" data-service-edit="${service.id}" type="button">Edit</button>
+                        <button class="danger-button compact-button" data-service-delete="${service.id}" type="button">Delete</button>
+                      </div>`
+                    : ""
+                }
               </td>
             </tr>`
         )
@@ -398,8 +432,12 @@ function renderSchedules() {
               }
               <div class="row-actions">
                 <button class="secondary-button compact-button" data-schedule-gaps="${schedule.id}" type="button">Gaps</button>
-                <button class="secondary-button compact-button" data-schedule-edit="${schedule.id}" type="button">Edit</button>
-                <button class="danger-button compact-button" data-schedule-delete="${schedule.id}" type="button">Delete</button>
+                ${
+                  isAdmin()
+                    ? `<button class="secondary-button compact-button" data-schedule-edit="${schedule.id}" type="button">Edit</button>
+                       <button class="danger-button compact-button" data-schedule-delete="${schedule.id}" type="button">Delete</button>`
+                    : ""
+                }
               </div>
             </div>`;
         })
@@ -425,10 +463,14 @@ function renderPolicies() {
               <div class="item-header"><strong>${escapeHtml(policy.name)}</strong><span>${policy.steps.length} step(s)</span></div>
               <small>Repeat ${policy.repeat_enabled ? "enabled" : "disabled"} - Catchall ${escapeHtml(userName(policy.catchall_user_id))}</small>
               <div class="mono">${escapeHtml(JSON.stringify(policy.steps))}</div>
-              <div class="row-actions">
-                <button class="secondary-button compact-button" data-policy-edit="${policy.id}" type="button">Edit</button>
-                <button class="danger-button compact-button" data-policy-delete="${policy.id}" type="button">Delete</button>
-              </div>
+              ${
+                isAdmin()
+                  ? `<div class="row-actions">
+                      <button class="secondary-button compact-button" data-policy-edit="${policy.id}" type="button">Edit</button>
+                      <button class="danger-button compact-button" data-policy-delete="${policy.id}" type="button">Delete</button>
+                    </div>`
+                  : ""
+              }
             </div>`
         )
         .join("")
@@ -503,19 +545,26 @@ async function editUser(user) {
     if (timezone === null) return;
     const role = promptText("Role (responder, admin, stakeholder)", user.role);
     if (role === null) return;
+    const isActiveValue = promptText("Active? true or false", String(user.is_active));
+    if (isActiveValue === null) return;
     const channels = promptText("Notification channels, comma separated", channelValue(user));
     if (channels === null) return;
+    const password = promptText("New password, blank to keep current", "");
+    if (password === null) return;
+    const payload = {
+      name,
+      email,
+      phone_number: phoneNumber,
+      timezone,
+      role,
+      is_active: isActiveValue.toLowerCase() === "true" || isActiveValue === "1" || isActiveValue.toLowerCase() === "yes",
+      notification_preferences: { ...(user.notification_preferences || {}), channels: channels.split(",").map((item) => item.trim()).filter(Boolean) },
+    };
+    if (password) payload.password = password;
     await mutate(
       "PATCH",
       `/users/${user.id}`,
-      {
-        name,
-        email,
-        phone_number: phoneNumber,
-        timezone,
-        role,
-        notification_preferences: { ...(user.notification_preferences || {}), channels: channels.split(",").map((item) => item.trim()).filter(Boolean) },
-      },
+      payload,
       "User updated"
     );
   } catch (error) {
@@ -624,8 +673,16 @@ async function loadScheduleGaps(scheduleId) {
 function wireForms() {
   $("#user-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const data = Object.fromEntries(new FormData(event.currentTarget).entries());
-    data.notification_preferences = { channels: data.channels.split(",").map((item) => item.trim()).filter(Boolean) };
+    const formData = new FormData(event.currentTarget);
+    const data = Object.fromEntries(formData.entries());
+    const channels = formData.getAll("channels");
+    if (!channels.length) {
+      showToast("Select at least one notification channel", true);
+      return;
+    }
+    data.notification_preferences = { channels };
+    data.is_active = data.is_active === "true";
+    if (!data.password) delete data.password;
     delete data.channels;
     if (await submitJson("/users", data, "User created")) event.currentTarget.reset();
   });

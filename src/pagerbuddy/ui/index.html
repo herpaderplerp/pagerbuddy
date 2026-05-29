@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PagerBuddy Admin</title>
-    <link rel="stylesheet" href="/dashboard/assets/styles.css?v=3" />
+    <link rel="stylesheet" href="/dashboard/assets/styles.css?v=4" />
   </head>
   <body>
     <div class="app-shell">
@@ -30,7 +30,7 @@
         <header class="topbar">
           <div>
             <h1>On-call operations</h1>
-            <p id="last-refresh">Loading PagerBuddy state</p>
+            <p><span id="last-refresh">Loading PagerBuddy state</span><span id="current-user"></span></p>
           </div>
           <div class="topbar-actions">
             <a class="icon-button" href="/docs" title="Open API docs" aria-label="Open API docs">?</a>
@@ -116,14 +116,14 @@
         <section class="view" id="view-people" aria-labelledby="people-title">
           <div class="section-heading">
             <h2 id="people-title">People</h2>
-            <button class="primary-button" form="user-form" type="submit"><span aria-hidden="true">+</span> Add user</button>
+            <button class="primary-button" data-admin-only form="user-form" type="submit"><span aria-hidden="true">+</span> Add user</button>
           </div>
           <div class="split-layout">
-            <section class="panel">
+            <section class="panel" data-admin-only>
               <div class="panel-heading"><h3>Users</h3></div>
               <div class="table-wrap">
                 <table>
-                  <thead><tr><th>Name</th><th>Role</th><th>Email</th><th>Phone</th><th>Actions</th></tr></thead>
+                  <thead><tr><th>Name</th><th>Role</th><th>Email</th><th>Phone</th><th>Notify</th><th>Actions</th></tr></thead>
                   <tbody id="user-table"></tbody>
                 </table>
               </div>
@@ -136,7 +136,14 @@
                 <label>Email<input name="email" type="email" required /></label>
                 <label>Phone<input name="phone_number" placeholder="+15551234567" required /></label>
                 <label>Timezone<input name="timezone" value="America/Toronto" required /></label>
-                <label>Channels<select name="channels"><option value="phone_call,sms,email">Phone, SMS, email</option><option value="sms,email">SMS, email</option><option value="email">Email only</option></select></label>
+                <label>Active<select name="is_active"><option value="true" selected>Active</option><option value="false">Disabled</option></select></label>
+                <label>Password<input name="password" type="password" minlength="8" autocomplete="new-password" /></label>
+                <fieldset class="span-2 check-group">
+                  <legend>Notify by</legend>
+                  <label class="check-row"><input name="channels" type="checkbox" value="phone_call" checked /> Voice call</label>
+                  <label class="check-row"><input name="channels" type="checkbox" value="sms" checked /> SMS</label>
+                  <label class="check-row"><input name="channels" type="checkbox" value="email" checked /> Email</label>
+                </fieldset>
               </form>
             </section>
           </div>
@@ -145,10 +152,10 @@
         <section class="view" id="view-services" aria-labelledby="services-title">
           <div class="section-heading">
             <h2 id="services-title">Services</h2>
-            <button class="primary-button" form="service-form" type="submit"><span aria-hidden="true">+</span> Add service</button>
+            <button class="primary-button" data-admin-only form="service-form" type="submit"><span aria-hidden="true">+</span> Add service</button>
           </div>
           <div class="split-layout">
-            <section class="panel">
+            <section class="panel" data-admin-only>
               <div class="panel-heading"><h3>Services</h3></div>
               <div class="table-wrap">
                 <table>
@@ -167,7 +174,7 @@
               </form>
             </section>
           </div>
-          <section class="panel">
+          <section class="panel" data-admin-only>
             <div class="panel-heading"><h3>Stakeholders</h3></div>
             <form id="stakeholder-form" class="form-grid four">
               <label>Service<select name="service_id" data-source="services" required></select></label>
@@ -181,10 +188,10 @@
         <section class="view" id="view-schedules" aria-labelledby="schedules-title">
           <div class="section-heading">
             <h2 id="schedules-title">Schedules</h2>
-            <button class="primary-button" form="schedule-form" type="submit"><span aria-hidden="true">+</span> Add schedule</button>
+            <button class="primary-button" data-admin-only form="schedule-form" type="submit"><span aria-hidden="true">+</span> Add schedule</button>
           </div>
           <div class="split-layout">
-            <section class="panel">
+            <section class="panel" data-admin-only>
               <div class="panel-heading"><h3>Schedules</h3></div>
               <div id="schedule-list" class="item-list"></div>
             </section>
@@ -197,7 +204,7 @@
               </form>
             </section>
           </div>
-          <section class="panel">
+          <section class="panel" data-admin-only>
             <div class="panel-heading"><h3>Create override</h3></div>
             <form id="override-form" class="form-grid four">
               <label>Schedule<select name="schedule_id" data-source="schedules" required></select></label>
@@ -214,10 +221,10 @@
         <section class="view" id="view-policies" aria-labelledby="policies-title">
           <div class="section-heading">
             <h2 id="policies-title">Policies</h2>
-            <button class="primary-button" form="policy-form" type="submit"><span aria-hidden="true">+</span> Add policy</button>
+            <button class="primary-button" data-admin-only form="policy-form" type="submit"><span aria-hidden="true">+</span> Add policy</button>
           </div>
           <div class="split-layout">
-            <section class="panel">
+            <section class="panel" data-admin-only>
               <div class="panel-heading"><h3>Escalation policies</h3></div>
               <div id="policy-list" class="item-list"></div>
             </section>
@@ -235,6 +242,6 @@
         </section>
       </main>
     </div>
-    <script type="module" src="/dashboard/assets/app.js?v=3"></script>
+    <script type="module" src="/dashboard/assets/app.js?v=4"></script>
   </body>
 </html>

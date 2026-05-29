@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     smtp_from: str = "alerts@pagerbuddy.local"
 
     store_recordings_locally: bool = False
+    recording_storage_dir: str = "recordings"
+    local_transcription_enabled: bool = True
+    local_transcription_model: str = "base.en"
+    local_transcription_device: str = "cpu"
+    local_transcription_compute_type: str = "int8"
     admin_alert_emails: str = Field(default="")
     worker_poll_seconds: int = 10
     scheduler_poll_seconds: int = 3600

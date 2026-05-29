@@ -17,7 +17,9 @@ from pagerbuddy.incidents import (
     resolve_incident,
 )
 from pagerbuddy.models import Incident, NotificationAttempt, NotificationStatus, TimelineEventType, User
+from pagerbuddy.recordings import RecordingDownloadError, download_recording, recording_media_url
 from pagerbuddy.timeline import record_event
+from pagerbuddy.transcription import LocalTranscriptionError, transcribe_recording
 
 router = APIRouter(prefix="/webhooks/twilio", tags=["twilio"])
 
@@ -44,11 +46,14 @@ def inbound_voice(
         f"You have reached the {service_name} on-call line. "
         "Please leave a detailed message after the tone. Your call is being recorded."
     )
-    return twiml(
-        f"<Say>{html.escape(message)}</Say>"
-        f'<Record action="{html.escape(action)}" method="POST" transcribe="true" '
-        f'transcriptionCallback="{html.escape(transcription)}" maxLength="600" />'
-    )
+    if settings.local_transcription_enabled:
+        record_options = f'<Record action="{html.escape(action)}" method="POST" transcribe="false" maxLength="600" />'
+    else:
+        record_options = (
+            f'<Record action="{html.escape(action)}" method="POST" transcribe="true" '
+            f'transcriptionCallback="{html.escape(transcription)}" maxLength="600" />'
+        )
+    return twiml(f"<Say>{html.escape(message)}</Say>{record_options}")
 
 
 @router.post("/recording-complete")
@@ -64,6 +69,57 @@ def recording_complete(
         incident = create_incident_from_recording(db, To, From, CallSid, RecordingSid, RecordingUrl)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    settings = get_settings()
+    local_path = None
+    if settings.store_recordings_locally and RecordingUrl:
+        try:
+            local_path = download_recording(RecordingUrl, RecordingSid, settings)
+            record_event(
+                db,
+                incident.id,
+                TimelineEventType.recording_received,
+                {
+                    "recording_sid": RecordingSid,
+                    "local_path": str(local_path),
+                    "storage": "local",
+                },
+            )
+        except RecordingDownloadError as exc:
+            record_event(
+                db,
+                incident.id,
+                TimelineEventType.notification_failed,
+                {
+                    "recording_sid": RecordingSid,
+                    "recording_url": RecordingUrl,
+                    "storage": "local",
+                    "error": str(exc),
+                },
+            )
+    if settings.local_transcription_enabled and local_path is not None:
+        try:
+            transcription = transcribe_recording(local_path, settings)
+            if transcription:
+                apply_transcription(db, RecordingSid, transcription)
+            else:
+                record_event(
+                    db,
+                    incident.id,
+                    TimelineEventType.transcription_received,
+                    {"recording_sid": RecordingSid, "source": "local", "empty": True},
+                )
+        except LocalTranscriptionError as exc:
+            record_event(
+                db,
+                incident.id,
+                TimelineEventType.notification_failed,
+                {
+                    "recording_sid": RecordingSid,
+                    "storage": "local",
+                    "follow_up": "local_transcription",
+                    "error": str(exc),
+                },
+            )
     notify_stakeholders_triggered(db, incident)
     start_escalation(db, incident)
     db.commit()
@@ -84,13 +140,24 @@ def transcription_complete(
     return {"status": "ok", "incident_id": str(incident.id)}
 
 
-def _outbound_prompt(incident: Incident) -> str:
-    transcription = incident.transcription or f"Transcription pending. Voicemail is available at {incident.recording_url or 'the recording URL'}."
+def _outbound_intro(incident: Incident) -> str:
     return (
         f"Incident for {incident.service.name}. Priority {incident.priority.value}. "
-        f"Caller {incident.caller_id or 'unknown'}. {transcription[:500]}. "
-        "Press 1 to acknowledge. Press 2 to escalate immediately. Press 9 to repeat this message."
+        f"Caller {incident.caller_id or 'unknown caller'}. "
     )
+
+
+def _outbound_action_prompt() -> str:
+    return "Press 1 to acknowledge. Press 2 to escalate immediately. Press 9 to repeat this message."
+
+
+def _outbound_message_twiml(incident: Incident) -> str:
+    intro = f"<Say>{html.escape(_outbound_intro(incident))}</Say>"
+    action_prompt = f'<Gather numDigits="1" timeout="10"><Say>{html.escape(_outbound_action_prompt())}</Say></Gather>'
+    if incident.recording_url:
+        return f"{intro}<Say>Playing voicemail now.</Say><Play>{html.escape(recording_media_url(incident.recording_url))}</Play>{action_prompt}"
+    fallback = incident.transcription or "Voicemail recording is unavailable."
+    return f"{intro}<Say>{html.escape(fallback[:900])}</Say>{action_prompt}"
 
 
 @router.api_route("/outbound-response", methods=["GET", "POST"], include_in_schema=False)
@@ -112,8 +179,7 @@ def outbound_response(
         manual_escalate(db, incident, str(user.id), "phone_call")
         db.commit()
         return twiml("<Say>Incident escalated. Goodbye.</Say><Hangup />")
-    prompt = html.escape(_outbound_prompt(incident))
-    return twiml(f'<Gather numDigits="1" timeout="10"><Say>{prompt}</Say></Gather><Redirect method="POST" />')
+    return twiml(f"{_outbound_message_twiml(incident)}<Redirect method=\"POST\" />")
 
 
 @router.post("/sms")

@@ -5,9 +5,9 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from pagerbuddy.api import router as api_router
-from pagerbuddy.auth import admin_auth_required, basic_auth_valid
+from pagerbuddy.auth import admin_auth_required, authenticate_basic
 from pagerbuddy.config import get_settings
-from pagerbuddy.database import init_db
+from pagerbuddy.database import SessionLocal, init_db
 from pagerbuddy.twilio_security import valid_twilio_signature
 from pagerbuddy.twilio_webhooks import router as twilio_router
 
@@ -43,12 +43,15 @@ async def require_twilio_signature(request: Request, call_next):
 @app.middleware("http")
 async def require_admin_auth(request: Request, call_next):
     settings = get_settings()
-    if admin_auth_required(request.url.path, settings) and not basic_auth_valid(request.headers, settings):
-        return Response(
-            "Authentication required",
-            status_code=401,
-            headers={"WWW-Authenticate": 'Basic realm="PagerBuddy Admin"'},
-        )
+    if admin_auth_required(request.url.path, settings):
+        with SessionLocal() as db:
+            request.state.principal = authenticate_basic(request.headers, settings, db)
+        if request.state.principal is None:
+            return Response(
+                "Authentication required",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="PagerBuddy Admin"'},
+            )
     return await call_next(request)
 
 

@@ -53,7 +53,15 @@ Public paths:
 - `/dashboard/assets/...`
 - `/incident-actions/...`
 
-If `ADMIN_PASSWORD` is blank, admin routes reject all credentials. The current local ignored `.env` may contain development credentials, but do not copy secrets into tracked files.
+Authentication accepts either the bootstrap admin configured by `ADMIN_USERNAME`/`ADMIN_PASSWORD` or an active database user logging in with email address and password.
+
+Role enforcement:
+
+- `admin`: full dashboard/API management, including users, policies, services, schedules, and stakeholder subscriptions.
+- `responder`: operational incident actions and read access to operational configuration.
+- `stakeholder`: read-only operational access.
+
+If `ADMIN_PASSWORD` is blank, the bootstrap admin is disabled; database users with passwords can still authenticate. The current local ignored `.env` may contain development credentials, but do not copy secrets into tracked files.
 
 ## Twilio And ngrok
 
@@ -88,6 +96,23 @@ When the ngrok URL changes:
 
 The local Twilio trial guard restricts phone/SMS notifications to `TWILIO_TRIAL_ALLOWED_NUMBER` when configured.
 
+## Local Recordings
+
+Voicemail recordings can be downloaded during `/webhooks/twilio/recording-complete` when:
+
+```env
+STORE_RECORDINGS_LOCALLY=true
+RECORDING_STORAGE_DIR=/app/recordings
+LOCAL_TRANSCRIPTION_ENABLED=true
+LOCAL_TRANSCRIPTION_MODEL=base.en
+LOCAL_TRANSCRIPTION_DEVICE=cpu
+LOCAL_TRANSCRIPTION_COMPUTE_TYPE=int8
+```
+
+Compose mounts ignored `./recordings` into `/app/recordings`. Recording files must not be committed.
+
+When local transcription is enabled, inbound Twilio `<Record>` disables Twilio transcription and PagerBuddy transcribes the downloaded local file with `faster-whisper` before escalation starts. Outbound responder calls still play Twilio's hosted recording media URL via `<Play>`; local recording serving is not part of the current implementation.
+
 ## Secrets
 
 Never commit secrets. `.env` is ignored. Keep `.env.example` limited to blank/example values only.
@@ -101,6 +126,8 @@ Ignored local artifacts include:
 - `*.egg-info/`
 - `.DS_Store`
 - `pagerbuddy.db`
+- local database dumps such as `*.sql`, `*.dump`, `*.sqlite`, and `*.db`
+- `recordings/`
 
 ## Implementation Notes
 
@@ -110,6 +137,11 @@ Ignored local artifacts include:
 - Twilio webhooks are under `src/pagerbuddy/twilio_webhooks.py`.
 - Signature validation is in `src/pagerbuddy/twilio_security.py`.
 - Notification dispatch and trial-recipient checks are in `src/pagerbuddy/notifications.py`.
+- User notification preferences use `notification_preferences.channels`; every configured channel is sent for each escalation attempt rather than rotating one channel per retry.
+- Recording downloads are in `src/pagerbuddy/recordings.py`.
+- Local transcription is in `src/pagerbuddy/transcription.py`.
+- Password hashing and RBAC dependencies are in `src/pagerbuddy/auth.py`.
+- `Base.metadata.create_all` is supplemented by a small compatibility schema check for user-management columns while the project does not yet use Alembic.
 - Admin dashboard JavaScript calls the same REST API and must keep using same-origin authenticated requests.
 - The dashboard is intended to be the primary management surface. When admin REST endpoints are added or changed, expose the action in `src/pagerbuddy/ui` as well.
 - Current dashboard management coverage includes create/list/update/delete for users, services, schedules, and escalation policies; stakeholder subscribe/unsubscribe; schedule gap checks; and incident create/update/escalation/acknowledge/resolve/reopen/reassign/merge/note/timeline actions.
@@ -118,9 +150,7 @@ Ignored local artifacts include:
 
 Known remaining work includes:
 
-- Full role-based access control by user role.
 - In-flight Twilio outbound call cancellation after acknowledgement.
 - SMS ambiguity resolution by incident ID.
 - Time-based email action-token expiry.
-- Local recording download/storage adapter.
 - Alembic migrations.

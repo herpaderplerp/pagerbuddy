@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from pagerbuddy import incidents as incident_service
 from pagerbuddy import schemas
+from pagerbuddy.auth import Principal, hash_password, require_roles
 from pagerbuddy.database import get_db
 from pagerbuddy.escalation import start_escalation
 from pagerbuddy.models import (
@@ -28,6 +29,10 @@ from pagerbuddy.timeline import record_event
 
 router = APIRouter()
 
+READ_OPERATIONAL = require_roles(UserRole.admin, UserRole.responder, UserRole.stakeholder)
+RESPONDER_OPERATION = require_roles(UserRole.admin, UserRole.responder)
+ADMIN_ONLY = require_roles(UserRole.admin)
+
 
 def _get_or_404(db: Session, model, item_id: uuid.UUID):
     item = db.get(model, item_id)
@@ -45,14 +50,46 @@ def _delete_or_409(db: Session, item) -> None:
         raise HTTPException(status_code=409, detail="Cannot delete this record because it is still referenced") from exc
 
 
+def _active_db_admin_count(db: Session) -> int:
+    return len(
+        db.scalars(
+            select(User).where(
+                User.role == UserRole.admin,
+                User.is_active.is_(True),
+            )
+        ).all()
+    )
+
+
+def _build_user(payload: schemas.UserCreate) -> User:
+    data = payload.model_dump(exclude={"password"})
+    if payload.password:
+        data["password_hash"] = hash_password(payload.password)
+    return User(**data)
+
+
 @router.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@router.get("/auth/me", response_model=schemas.AuthPrincipalRead)
+def read_current_principal(principal: Principal = Depends(READ_OPERATIONAL)) -> schemas.AuthPrincipalRead:
+    return schemas.AuthPrincipalRead(
+        username=principal.username,
+        role=principal.role,
+        user_id=principal.user_id,
+        source=principal.source,
+    )
+
+
 @router.post("/users", response_model=schemas.UserRead, status_code=201)
-def create_user(payload: schemas.UserCreate, db: Session = Depends(get_db)) -> User:
-    user = User(**payload.model_dump())
+def create_user(
+    payload: schemas.UserCreate,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(ADMIN_ONLY),
+) -> User:
+    user = _build_user(payload)
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -60,28 +97,54 @@ def create_user(payload: schemas.UserCreate, db: Session = Depends(get_db)) -> U
 
 
 @router.get("/users", response_model=list[schemas.UserRead])
-def list_users(db: Session = Depends(get_db)) -> list[User]:
+def list_users(
+    db: Session = Depends(get_db),
+    _: Principal = Depends(READ_OPERATIONAL),
+) -> list[User]:
     return list(db.scalars(select(User)).all())
 
 
 @router.patch("/users/{user_id}", response_model=schemas.UserRead)
-def update_user(user_id: uuid.UUID, payload: schemas.UserUpdate, db: Session = Depends(get_db)) -> User:
+def update_user(
+    user_id: uuid.UUID,
+    payload: schemas.UserUpdate,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(ADMIN_ONLY),
+) -> User:
     user = _get_or_404(db, User, user_id)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    update_data = payload.model_dump(exclude_unset=True, exclude={"password"})
+    would_remove_admin = user.role == UserRole.admin and (
+        update_data.get("role") not in {None, UserRole.admin} or update_data.get("is_active") is False
+    )
+    if would_remove_admin and _active_db_admin_count(db) <= 1 and principal.source != "config":
+        raise HTTPException(status_code=409, detail="Cannot remove the last active database admin")
+    for key, value in update_data.items():
         setattr(user, key, value)
+    if payload.password:
+        user.password_hash = hash_password(payload.password)
     db.commit()
     db.refresh(user)
     return user
 
 
 @router.delete("/users/{user_id}", status_code=204)
-def delete_user(user_id: uuid.UUID, db: Session = Depends(get_db)) -> None:
+def delete_user(
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(ADMIN_ONLY),
+) -> None:
     user = _get_or_404(db, User, user_id)
+    if user.role == UserRole.admin and user.is_active and _active_db_admin_count(db) <= 1 and principal.source != "config":
+        raise HTTPException(status_code=409, detail="Cannot delete the last active database admin")
     _delete_or_409(db, user)
 
 
 @router.post("/escalation-policies", response_model=schemas.EscalationPolicyRead, status_code=201)
-def create_policy(payload: schemas.EscalationPolicyCreate, db: Session = Depends(get_db)) -> EscalationPolicy:
+def create_policy(
+    payload: schemas.EscalationPolicyCreate,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(ADMIN_ONLY),
+) -> EscalationPolicy:
     policy = EscalationPolicy(**payload.model_dump())
     db.add(policy)
     db.commit()
@@ -90,7 +153,10 @@ def create_policy(payload: schemas.EscalationPolicyCreate, db: Session = Depends
 
 
 @router.get("/escalation-policies", response_model=list[schemas.EscalationPolicyRead])
-def list_policies(db: Session = Depends(get_db)) -> list[EscalationPolicy]:
+def list_policies(
+    db: Session = Depends(get_db),
+    _: Principal = Depends(READ_OPERATIONAL),
+) -> list[EscalationPolicy]:
     return list(db.scalars(select(EscalationPolicy)).all())
 
 
@@ -99,6 +165,7 @@ def update_policy(
     policy_id: uuid.UUID,
     payload: schemas.EscalationPolicyUpdate,
     db: Session = Depends(get_db),
+    _: Principal = Depends(ADMIN_ONLY),
 ) -> EscalationPolicy:
     policy = _get_or_404(db, EscalationPolicy, policy_id)
     if payload.catchall_user_id is not None:
@@ -111,13 +178,21 @@ def update_policy(
 
 
 @router.delete("/escalation-policies/{policy_id}", status_code=204)
-def delete_policy(policy_id: uuid.UUID, db: Session = Depends(get_db)) -> None:
+def delete_policy(
+    policy_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(ADMIN_ONLY),
+) -> None:
     policy = _get_or_404(db, EscalationPolicy, policy_id)
     _delete_or_409(db, policy)
 
 
 @router.post("/services", response_model=schemas.ServiceRead, status_code=201)
-def create_service(payload: schemas.ServiceCreate, db: Session = Depends(get_db)) -> Service:
+def create_service(
+    payload: schemas.ServiceCreate,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(ADMIN_ONLY),
+) -> Service:
     _get_or_404(db, EscalationPolicy, payload.escalation_policy_id)
     service = Service(**payload.model_dump())
     db.add(service)
@@ -127,12 +202,20 @@ def create_service(payload: schemas.ServiceCreate, db: Session = Depends(get_db)
 
 
 @router.get("/services", response_model=list[schemas.ServiceRead])
-def list_services(db: Session = Depends(get_db)) -> list[Service]:
+def list_services(
+    db: Session = Depends(get_db),
+    _: Principal = Depends(READ_OPERATIONAL),
+) -> list[Service]:
     return list(db.scalars(select(Service)).all())
 
 
 @router.patch("/services/{service_id}", response_model=schemas.ServiceRead)
-def update_service(service_id: uuid.UUID, payload: schemas.ServiceUpdate, db: Session = Depends(get_db)) -> Service:
+def update_service(
+    service_id: uuid.UUID,
+    payload: schemas.ServiceUpdate,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(ADMIN_ONLY),
+) -> Service:
     service = _get_or_404(db, Service, service_id)
     if payload.escalation_policy_id is not None:
         _get_or_404(db, EscalationPolicy, payload.escalation_policy_id)
@@ -144,13 +227,21 @@ def update_service(service_id: uuid.UUID, payload: schemas.ServiceUpdate, db: Se
 
 
 @router.delete("/services/{service_id}", status_code=204)
-def delete_service(service_id: uuid.UUID, db: Session = Depends(get_db)) -> None:
+def delete_service(
+    service_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(ADMIN_ONLY),
+) -> None:
     service = _get_or_404(db, Service, service_id)
     _delete_or_409(db, service)
 
 
 @router.post("/schedules", response_model=schemas.ScheduleRead, status_code=201)
-def create_schedule(payload: schemas.ScheduleCreate, db: Session = Depends(get_db)) -> Schedule:
+def create_schedule(
+    payload: schemas.ScheduleCreate,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(ADMIN_ONLY),
+) -> Schedule:
     schedule = Schedule(**payload.model_dump())
     db.add(schedule)
     db.commit()
@@ -159,12 +250,20 @@ def create_schedule(payload: schemas.ScheduleCreate, db: Session = Depends(get_d
 
 
 @router.get("/schedules", response_model=list[schemas.ScheduleRead])
-def list_schedules(db: Session = Depends(get_db)) -> list[Schedule]:
+def list_schedules(
+    db: Session = Depends(get_db),
+    _: Principal = Depends(READ_OPERATIONAL),
+) -> list[Schedule]:
     return list(db.scalars(select(Schedule)).all())
 
 
 @router.patch("/schedules/{schedule_id}", response_model=schemas.ScheduleRead)
-def update_schedule(schedule_id: uuid.UUID, payload: schemas.ScheduleUpdate, db: Session = Depends(get_db)) -> Schedule:
+def update_schedule(
+    schedule_id: uuid.UUID,
+    payload: schemas.ScheduleUpdate,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(ADMIN_ONLY),
+) -> Schedule:
     schedule = _get_or_404(db, Schedule, schedule_id)
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(schedule, key, value)
@@ -174,7 +273,11 @@ def update_schedule(schedule_id: uuid.UUID, payload: schemas.ScheduleUpdate, db:
 
 
 @router.delete("/schedules/{schedule_id}", status_code=204)
-def delete_schedule(schedule_id: uuid.UUID, db: Session = Depends(get_db)) -> None:
+def delete_schedule(
+    schedule_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(ADMIN_ONLY),
+) -> None:
     schedule = _get_or_404(db, Schedule, schedule_id)
     _delete_or_409(db, schedule)
 
@@ -184,6 +287,7 @@ def create_override(
     schedule_id: uuid.UUID,
     payload: schemas.OverrideCreate,
     db: Session = Depends(get_db),
+    _: Principal = Depends(ADMIN_ONLY),
 ) -> Schedule:
     schedule = _get_or_404(db, Schedule, schedule_id)
     _get_or_404(db, User, payload.override_user_id)
@@ -198,13 +302,22 @@ def create_override(
 
 
 @router.get("/schedules/{schedule_id}/gaps")
-def get_schedule_gaps(schedule_id: uuid.UUID, db: Session = Depends(get_db)) -> list[dict[str, str]]:
+def get_schedule_gaps(
+    schedule_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(READ_OPERATIONAL),
+) -> list[dict[str, str]]:
     schedule = _get_or_404(db, Schedule, schedule_id)
     return [{"start": gap.start.isoformat(), "end": gap.end.isoformat()} for gap in detect_schedule_gaps(schedule)]
 
 
 @router.post("/services/{service_id}/stakeholders/{user_id}", status_code=204)
-def subscribe_stakeholder(service_id: uuid.UUID, user_id: uuid.UUID, db: Session = Depends(get_db)) -> None:
+def subscribe_stakeholder(
+    service_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(ADMIN_ONLY),
+) -> None:
     _get_or_404(db, Service, service_id)
     user = _get_or_404(db, User, user_id)
     if user.role != UserRole.stakeholder:
@@ -218,7 +331,12 @@ def subscribe_stakeholder(service_id: uuid.UUID, user_id: uuid.UUID, db: Session
 
 
 @router.delete("/services/{service_id}/stakeholders/{user_id}", status_code=204)
-def unsubscribe_stakeholder(service_id: uuid.UUID, user_id: uuid.UUID, db: Session = Depends(get_db)) -> None:
+def unsubscribe_stakeholder(
+    service_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(ADMIN_ONLY),
+) -> None:
     subscription = db.scalar(
         select(StakeholderSubscription).where(
             StakeholderSubscription.service_id == service_id,
@@ -232,12 +350,19 @@ def unsubscribe_stakeholder(service_id: uuid.UUID, user_id: uuid.UUID, db: Sessi
 
 
 @router.get("/incidents", response_model=list[schemas.IncidentRead])
-def list_incidents(db: Session = Depends(get_db)) -> list[Incident]:
+def list_incidents(
+    db: Session = Depends(get_db),
+    _: Principal = Depends(READ_OPERATIONAL),
+) -> list[Incident]:
     return list(db.scalars(select(Incident).order_by(Incident.created_at.desc())).all())
 
 
 @router.post("/incidents", response_model=schemas.IncidentRead, status_code=201)
-def create_incident(payload: schemas.IncidentCreate, db: Session = Depends(get_db)) -> Incident:
+def create_incident(
+    payload: schemas.IncidentCreate,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(RESPONDER_OPERATION),
+) -> Incident:
     service = _get_or_404(db, Service, payload.service_id)
     incident = Incident(
         service_id=service.id,
@@ -264,7 +389,11 @@ def create_incident(payload: schemas.IncidentCreate, db: Session = Depends(get_d
 
 
 @router.get("/incidents/{incident_id}", response_model=schemas.IncidentRead)
-def get_incident(incident_id: uuid.UUID, db: Session = Depends(get_db)) -> Incident:
+def get_incident(
+    incident_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(READ_OPERATIONAL),
+) -> Incident:
     return _get_or_404(db, Incident, incident_id)
 
 
@@ -273,6 +402,7 @@ def update_incident(
     incident_id: uuid.UUID,
     payload: schemas.IncidentUpdate,
     db: Session = Depends(get_db),
+    _: Principal = Depends(RESPONDER_OPERATION),
 ) -> Incident:
     incident = _get_or_404(db, Incident, incident_id)
     for key, value in payload.model_dump(exclude_unset=True).items():
@@ -283,7 +413,11 @@ def update_incident(
 
 
 @router.post("/incidents/{incident_id}/start-escalation", response_model=schemas.IncidentRead)
-def start_incident_escalation(incident_id: uuid.UUID, db: Session = Depends(get_db)) -> Incident:
+def start_incident_escalation(
+    incident_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(RESPONDER_OPERATION),
+) -> Incident:
     incident = _get_or_404(db, Incident, incident_id)
     start_escalation(db, incident)
     db.commit()
@@ -296,6 +430,7 @@ def acknowledge_incident(
     incident_id: uuid.UUID,
     payload: schemas.AckResolveCreate,
     db: Session = Depends(get_db),
+    _: Principal = Depends(RESPONDER_OPERATION),
 ) -> Incident:
     incident = _get_or_404(db, Incident, incident_id)
     user = _get_or_404(db, User, payload.user_id)
@@ -320,6 +455,7 @@ def resolve_incident(
     incident_id: uuid.UUID,
     payload: schemas.AckResolveCreate,
     db: Session = Depends(get_db),
+    _: Principal = Depends(RESPONDER_OPERATION),
 ) -> Incident:
     incident = _get_or_404(db, Incident, incident_id)
     user = _get_or_404(db, User, payload.user_id)
@@ -369,6 +505,7 @@ def reopen_incident(
     incident_id: uuid.UUID,
     payload: schemas.AckResolveCreate,
     db: Session = Depends(get_db),
+    _: Principal = Depends(RESPONDER_OPERATION),
 ) -> Incident:
     incident = _get_or_404(db, Incident, incident_id)
     actor = _get_or_404(db, User, payload.user_id)
@@ -384,6 +521,7 @@ def reassign_incident(
     incident_id: uuid.UUID,
     payload: schemas.ReassignCreate,
     db: Session = Depends(get_db),
+    _: Principal = Depends(RESPONDER_OPERATION),
 ) -> Incident:
     incident = _get_or_404(db, Incident, incident_id)
     actor = _get_or_404(db, User, payload.actor_id)
@@ -400,6 +538,7 @@ def add_incident_note(
     incident_id: uuid.UUID,
     payload: schemas.NoteCreate,
     db: Session = Depends(get_db),
+    _: Principal = Depends(RESPONDER_OPERATION),
 ) -> None:
     incident = _get_or_404(db, Incident, incident_id)
     author = _get_or_404(db, User, payload.author_id)
@@ -412,6 +551,7 @@ def merge_incidents(
     incident_id: uuid.UUID,
     payload: schemas.MergeCreate,
     db: Session = Depends(get_db),
+    _: Principal = Depends(RESPONDER_OPERATION),
 ) -> Incident:
     parent = _get_or_404(db, Incident, incident_id)
     actor = _get_or_404(db, User, payload.actor_id)
@@ -423,7 +563,11 @@ def merge_incidents(
 
 
 @router.get("/incidents/{incident_id}/timeline")
-def incident_timeline(incident_id: uuid.UUID, db: Session = Depends(get_db)) -> list[dict]:
+def incident_timeline(
+    incident_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(READ_OPERATIONAL),
+) -> list[dict]:
     _get_or_404(db, Incident, incident_id)
     events = db.scalars(
         select(IncidentTimeline).where(IncidentTimeline.incident_id == incident_id).order_by(IncidentTimeline.occurred_at)

@@ -2,23 +2,47 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from pagerbuddy.models import IncidentPriority, IncidentStatus, UserRole
 
+NOTIFICATION_CHANNELS = {"phone_call", "sms", "email"}
 
-class UserCreate(BaseModel):
+
+def validate_notification_preferences(value: dict[str, Any]) -> dict[str, Any]:
+    if "channels" not in value:
+        return value
+    channels = value["channels"]
+    if not isinstance(channels, list) or not channels:
+        raise ValueError("notification_preferences.channels must include at least one channel")
+    invalid = sorted({channel for channel in channels if channel not in NOTIFICATION_CHANNELS})
+    if invalid:
+        raise ValueError(f"unsupported notification channel(s): {', '.join(invalid)}")
+    return {**value, "channels": channels}
+
+
+class UserBase(BaseModel):
     name: str
     email: EmailStr
     phone_number: str
     timezone: str = "UTC"
     role: UserRole = UserRole.responder
+    is_active: bool = True
     notification_preferences: dict[str, Any] = Field(
         default_factory=lambda: {"channels": ["phone_call", "sms", "email"]}
     )
 
+    @field_validator("notification_preferences")
+    @classmethod
+    def validate_channels(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_notification_preferences(value)
 
-class UserRead(UserCreate):
+
+class UserCreate(UserBase):
+    password: str | None = Field(default=None, min_length=8)
+
+
+class UserRead(UserBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -32,7 +56,21 @@ class UserUpdate(BaseModel):
     phone_number: str | None = None
     timezone: str | None = None
     role: UserRole | None = None
+    is_active: bool | None = None
+    password: str | None = Field(default=None, min_length=8)
     notification_preferences: dict[str, Any] | None = None
+
+    @field_validator("notification_preferences")
+    @classmethod
+    def validate_channels(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return validate_notification_preferences(value) if value is not None else None
+
+
+class AuthPrincipalRead(BaseModel):
+    username: str
+    role: UserRole
+    user_id: str | None = None
+    source: str
 
 
 class EscalationPolicyCreate(BaseModel):

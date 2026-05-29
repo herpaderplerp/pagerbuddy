@@ -228,6 +228,10 @@ button:disabled {
   display: block;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 .section-heading {
   justify-content: space-between;
   gap: 14px;
@@ -383,6 +387,23 @@ textarea {
 
 .span-2 {
   grid-column: span 2;
+}
+
+.check-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.check-group legend {
+  padding: 0 4px;
+  color: #3f4a56;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .check-row {

@@ -3,6 +3,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from pagerbuddy import api, schemas
+from pagerbuddy.auth import Principal
 from pagerbuddy.database import Base
 from pagerbuddy.models import StakeholderSubscription, User, UserRole
 
@@ -30,7 +31,7 @@ def test_user_update_and_delete_management_endpoints():
     assert updated.name == "Primary responder"
     assert updated.role == UserRole.admin
 
-    api.delete_user(user.id, db)
+    api.delete_user(user.id, db, Principal(username="bootstrap-admin", role=UserRole.admin, source="config"))
 
     assert db.get(User, user.id) is None
 
