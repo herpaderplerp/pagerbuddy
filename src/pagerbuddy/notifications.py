@@ -210,6 +210,8 @@ def dispatch_notification(
     attempt_number: int,
     client: NotificationClient | None = None,
 ) -> list[NotificationAttempt]:
+    if not user.is_active:
+        raise ValueError(f"user {user.id} is disabled")
     channels = preferred_channels(user, incident)
     if not channels:
         raise ValueError(f"user {user.id} has no usable notification channels")

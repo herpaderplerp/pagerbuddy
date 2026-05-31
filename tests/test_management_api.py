@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from pagerbuddy import api, schemas
 from pagerbuddy.auth import Principal
 from pagerbuddy.database import Base
-from pagerbuddy.models import StakeholderSubscription, User, UserRole
+from pagerbuddy.models import EscalationPolicy, StakeholderSubscription, User, UserRole
 
 
 def make_session():
@@ -34,6 +34,88 @@ def test_user_update_and_delete_management_endpoints():
     api.delete_user(user.id, db, Principal(username="bootstrap-admin", role=UserRole.admin, source="config"))
 
     assert db.get(User, user.id) is None
+
+
+def test_disable_user_keeps_historical_references_but_marks_inactive():
+    db = make_session()
+    user = api.create_user(
+        schemas.UserCreate(
+            name="Historical responder",
+            email="historical@example.com",
+            phone_number="+15550000003",
+        ),
+        db,
+    )
+    policy = EscalationPolicy(name="Production", steps=[])
+    db.add(policy)
+    db.commit()
+
+    disabled = api.disable_user(user.id, db, Principal(username="bootstrap-admin", role=UserRole.admin, source="config"))
+
+    assert disabled.id == user.id
+    assert disabled.is_active is False
+    assert db.get(User, user.id) is not None
+
+
+def test_disable_user_rejects_primary_contact_references():
+    db = make_session()
+    user = api.create_user(
+        schemas.UserCreate(
+            name="Primary responder",
+            email="primary@example.com",
+            phone_number="+15550000004",
+        ),
+        db,
+    )
+    policy = EscalationPolicy(
+        name="Production",
+        steps=[{"target_type": "user", "target_id": str(user.id), "attempt_timeout_seconds": 120, "max_attempts": 1}],
+        catchall_user_id=user.id,
+    )
+    db.add(policy)
+    db.commit()
+
+    try:
+        api.disable_user(user.id, db, Principal(username="bootstrap-admin", role=UserRole.admin, source="config"))
+    except HTTPException as exc:
+        assert exc.status_code == 409
+        assert "primary contact" in str(exc.detail)
+        assert "Production step 1" in str(exc.detail)
+        assert "Production catchall" in str(exc.detail)
+    else:
+        raise AssertionError("primary contact user should not be disabled")
+
+    assert db.get(User, user.id).is_active is True
+
+
+def test_update_user_rejects_disabling_primary_contact():
+    db = make_session()
+    user = api.create_user(
+        schemas.UserCreate(
+            name="Primary responder",
+            email="primary-update@example.com",
+            phone_number="+15550000005",
+        ),
+        db,
+    )
+    policy = EscalationPolicy(name="Production", steps=[{"target_type": "user", "target_id": str(user.id)}])
+    db.add(policy)
+    db.commit()
+
+    try:
+        api.update_user(
+            user.id,
+            schemas.UserUpdate(is_active=False),
+            db,
+            Principal(username="bootstrap-admin", role=UserRole.admin, source="config"),
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 409
+        assert "primary contact" in str(exc.detail)
+    else:
+        raise AssertionError("primary contact user should not be disabled through update")
+
+    assert db.get(User, user.id).is_active is True
 
 
 def test_service_schedule_policy_and_stakeholder_management_endpoints():

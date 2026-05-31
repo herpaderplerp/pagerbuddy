@@ -43,6 +43,8 @@ Twilio webhooks, `/healthz`, dashboard static assets, and tokenized `/incident-a
 
 Each user has configurable notification channels in `notification_preferences.channels`. Supported channels are `phone_call`, `sms`, and `email`. PagerBuddy sends every configured channel for the current escalation attempt, so a user configured for `phone_call` and `sms` receives both at the same time.
 
+Disable referenced users instead of hard-deleting them. Disabled users cannot authenticate and are skipped by escalation, while historical incidents, notification attempts, and action tokens remain intact. Users cannot be disabled while they are still configured as a primary escalation-policy contact or catchall.
+
 ## Twilio Security
 
 Twilio webhook signature validation is enabled by default with `TWILIO_VALIDATE_REQUESTS=true`. Set `PUBLIC_BASE_URL` to the exact public URL configured in Twilio, because Twilio signs the externally visible callback URL. For local webhook simulation without real Twilio signatures, temporarily set `TWILIO_VALIDATE_REQUESTS=false`.

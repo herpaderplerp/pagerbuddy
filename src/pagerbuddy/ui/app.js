@@ -367,6 +367,11 @@ function renderUsers() {
                   isAdmin()
                     ? `<div class="row-actions">
                         <button class="secondary-button compact-button" data-user-edit="${user.id}" type="button">Edit</button>
+                        ${
+                          user.is_active
+                            ? `<button class="secondary-button compact-button" data-user-disable="${user.id}" type="button">Disable</button>`
+                            : `<button class="secondary-button compact-button" data-user-enable="${user.id}" type="button">Enable</button>`
+                        }
                         <button class="danger-button compact-button" data-user-delete="${user.id}" type="button">Delete</button>
                       </div>`
                     : ""
@@ -378,6 +383,12 @@ function renderUsers() {
     : '<tr><td colspan="6" class="empty">No users yet</td></tr>';
   $$("[data-user-edit]").forEach((button) => {
     button.addEventListener("click", () => editUser(state.users.find((user) => user.id === button.dataset.userEdit)));
+  });
+  $$("[data-user-disable]").forEach((button) => {
+    button.addEventListener("click", () => disableUser(button.dataset.userDisable));
+  });
+  $$("[data-user-enable]").forEach((button) => {
+    button.addEventListener("click", () => enableUser(button.dataset.userEnable));
   });
   $$("[data-user-delete]").forEach((button) => {
     button.addEventListener("click", () => deleteResource(`/users/${button.dataset.userDelete}`, "user"));
@@ -526,6 +537,18 @@ async function submitJson(path, payload, success = "Saved") {
 async function deleteResource(path, label) {
   if (!window.confirm(`Delete this ${label}?`)) return;
   await mutate("DELETE", path, undefined, `${label[0].toUpperCase()}${label.slice(1)} deleted`);
+}
+
+async function disableUser(userId) {
+  const user = state.users.find((item) => item.id === userId);
+  if (!user || !window.confirm(`Disable ${user.name}?`)) return;
+  await mutate("POST", `/users/${userId}/disable`, undefined, "User disabled");
+}
+
+async function enableUser(userId) {
+  const user = state.users.find((item) => item.id === userId);
+  if (!user || !window.confirm(`Enable ${user.name}?`)) return;
+  await mutate("POST", `/users/${userId}/enable`, undefined, "User enabled");
 }
 
 function localDateToIso(value) {

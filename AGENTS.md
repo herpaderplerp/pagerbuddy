@@ -141,6 +141,7 @@ Ignored local artifacts include:
 - Recording downloads are in `src/pagerbuddy/recordings.py`.
 - Local transcription is in `src/pagerbuddy/transcription.py`.
 - Password hashing and RBAC dependencies are in `src/pagerbuddy/auth.py`.
+- Prefer disabling users over deleting referenced users. `/users/{user_id}/disable` preserves history, blocks login, and prevents the user from being paged by escalation. The API rejects disable requests while the user is still a direct escalation-policy contact or catchall.
 - `Base.metadata.create_all` is supplemented by a small compatibility schema check for user-management columns while the project does not yet use Alembic.
 - Admin dashboard JavaScript calls the same REST API and must keep using same-origin authenticated requests.
 - The dashboard is intended to be the primary management surface. When admin REST endpoints are added or changed, expose the action in `src/pagerbuddy/ui` as well.

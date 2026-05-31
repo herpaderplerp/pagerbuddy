@@ -59,3 +59,41 @@ def test_escalation_retries_then_moves_to_next_step():
     assert incident.escalation_step == 1
     assert incident.attempts_in_step == 1
     assert incident.status == IncidentStatus.triggered
+
+
+def test_escalation_skips_disabled_user_targets():
+    db = make_session()
+    disabled = User(name="Disabled", email="disabled@example.com", phone_number="+15550000003", is_active=False)
+    active = User(name="Active", email="active@example.com", phone_number="+15550000004")
+    db.add_all([disabled, active])
+    db.flush()
+    policy = EscalationPolicy(
+        name="Production",
+        steps=[
+            {
+                "target_type": "user",
+                "target_id": str(disabled.id),
+                "attempt_timeout_seconds": 120,
+                "max_attempts": 1,
+            },
+            {
+                "target_type": "user",
+                "target_id": str(active.id),
+                "attempt_timeout_seconds": 120,
+                "max_attempts": 1,
+            },
+        ],
+    )
+    db.add(policy)
+    db.flush()
+    service = Service(name="API", escalation_policy_id=policy.id, inbound_phone_number="+15551112222")
+    db.add(service)
+    db.flush()
+    incident = Incident(service_id=service.id, title="Voicemail from caller")
+    db.add(incident)
+    db.commit()
+
+    start_escalation(db, incident)
+
+    assert incident.escalation_step == 1
+    assert incident.attempts_in_step == 1

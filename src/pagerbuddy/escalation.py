@@ -140,7 +140,7 @@ def exhaust_or_repeat(db: Session, incident: Incident, now: datetime | None = No
     )
     if policy.catchall_user_id:
         catchall = db.get(User, policy.catchall_user_id)
-        if catchall:
+        if catchall and catchall.is_active:
             dispatch_notification(db, incident, catchall, incident.escalation_step, 1)
     return incident
 
@@ -157,12 +157,13 @@ def _resolve_step_user(db: Session, step: dict[str, Any], incident: Incident) ->
     if not target_type or not target_id:
         return None
     if target_type == "user":
-        return db.get(User, target_id)
+        user = db.get(User, target_id)
+        return user if user and user.is_active else None
     if target_type == "schedule":
         schedule = db.get(Schedule, target_id)
         if not schedule:
             return None
         user_id = resolve_on_call_user(schedule, incident.created_at)
-        return db.get(User, user_id) if user_id else None
+        user = db.get(User, user_id) if user_id else None
+        return user if user and user.is_active else None
     return None
-

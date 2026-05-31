@@ -61,6 +61,32 @@ def _active_db_admin_count(db: Session) -> int:
     )
 
 
+def _primary_contact_references(db: Session, user_id: uuid.UUID) -> list[str]:
+    references: list[str] = []
+    user_id_text = str(user_id)
+    policies = db.scalars(select(EscalationPolicy)).all()
+    for policy in policies:
+        if policy.catchall_user_id == user_id:
+            references.append(f"{policy.name} catchall")
+        for index, step in enumerate(policy.steps or [], start=1):
+            if step.get("target_type") == "user" and step.get("target_id") == user_id_text:
+                references.append(f"{policy.name} step {index}")
+    return references
+
+
+def _ensure_user_can_be_disabled(db: Session, user: User, principal: Principal) -> None:
+    if not user.is_active:
+        return
+    if user.role == UserRole.admin and _active_db_admin_count(db) <= 1 and principal.source != "config":
+        raise HTTPException(status_code=409, detail="Cannot disable the last active database admin")
+    references = _primary_contact_references(db, user.id)
+    if references:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot disable user while they are a primary contact: {', '.join(references)}",
+        )
+
+
 def _build_user(payload: schemas.UserCreate) -> User:
     data = payload.model_dump(exclude={"password"})
     if payload.password:
@@ -113,10 +139,11 @@ def update_user(
 ) -> User:
     user = _get_or_404(db, User, user_id)
     update_data = payload.model_dump(exclude_unset=True, exclude={"password"})
-    would_remove_admin = user.role == UserRole.admin and (
-        update_data.get("role") not in {None, UserRole.admin} or update_data.get("is_active") is False
-    )
-    if would_remove_admin and _active_db_admin_count(db) <= 1 and principal.source != "config":
+    will_disable = update_data.get("is_active") is False
+    if will_disable:
+        _ensure_user_can_be_disabled(db, user, principal)
+    will_remove_admin_role = user.role == UserRole.admin and update_data.get("role") not in {None, UserRole.admin}
+    if will_remove_admin_role and _active_db_admin_count(db) <= 1 and principal.source != "config":
         raise HTTPException(status_code=409, detail="Cannot remove the last active database admin")
     for key, value in update_data.items():
         setattr(user, key, value)
@@ -137,6 +164,33 @@ def delete_user(
     if user.role == UserRole.admin and user.is_active and _active_db_admin_count(db) <= 1 and principal.source != "config":
         raise HTTPException(status_code=409, detail="Cannot delete the last active database admin")
     _delete_or_409(db, user)
+
+
+@router.post("/users/{user_id}/disable", response_model=schemas.UserRead)
+def disable_user(
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(ADMIN_ONLY),
+) -> User:
+    user = _get_or_404(db, User, user_id)
+    _ensure_user_can_be_disabled(db, user, principal)
+    user.is_active = False
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.post("/users/{user_id}/enable", response_model=schemas.UserRead)
+def enable_user(
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(ADMIN_ONLY),
+) -> User:
+    user = _get_or_404(db, User, user_id)
+    user.is_active = True
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 @router.post("/escalation-policies", response_model=schemas.EscalationPolicyRead, status_code=201)
