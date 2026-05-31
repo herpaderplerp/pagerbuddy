@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session
 from pagerbuddy import incidents as incident_service
 from pagerbuddy import schemas
 from pagerbuddy.auth import Principal, hash_password, require_roles
+from pagerbuddy.config import get_settings
 from pagerbuddy.database import get_db
 from pagerbuddy.escalation import start_escalation
 from pagerbuddy.models import (
@@ -85,6 +87,21 @@ def _ensure_user_can_be_disabled(db: Session, user: User, principal: Principal) 
             status_code=409,
             detail=f"Cannot disable user while they are a primary contact: {', '.join(references)}",
         )
+
+
+def _as_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _ensure_action_token_not_expired(action_token: IncidentActionToken) -> None:
+    ttl_seconds = get_settings().incident_action_token_ttl_seconds
+    if ttl_seconds <= 0:
+        return
+    expires_at = _as_aware_utc(action_token.created_at) + timedelta(seconds=ttl_seconds)
+    if datetime.now(timezone.utc) >= expires_at:
+        raise HTTPException(status_code=410, detail="action token expired")
 
 
 def _build_user(payload: schemas.UserCreate) -> User:
@@ -536,6 +553,7 @@ def consume_incident_action(token: str, db: Session = Depends(get_db)) -> Incide
         raise HTTPException(status_code=404, detail="action token not found")
     if action_token.used_at is not None:
         raise HTTPException(status_code=409, detail="action token has already been used")
+    _ensure_action_token_not_expired(action_token)
     incident = _get_or_404(db, Incident, action_token.incident_id)
     if incident.status in {IncidentStatus.resolved, IncidentStatus.merged}:
         raise HTTPException(status_code=410, detail="action token expired because the incident is closed")

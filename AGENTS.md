@@ -73,6 +73,15 @@ TWILIO_VALIDATE_REQUESTS=true
 
 `PUBLIC_BASE_URL` must exactly match the public webhook URL configured in Twilio, because Twilio signs the external URL.
 
+Inbound caller restriction is opt-in:
+
+```env
+INBOUND_CALLER_WHITELIST_ENABLED=true
+INBOUND_CALLER_WHITELIST_NUMBERS=+15551234567,+15557654321
+```
+
+When enabled, `/webhooks/twilio/voice` rejects callers not in the comma-separated whitelist before recording. Rejected calls create a `SystemEvent` with `event_type="inbound_call_rejected"` and no incident.
+
 Current local development uses ngrok. The tunnel is intended to run detached in a screen session:
 
 ```bash
@@ -138,6 +147,8 @@ Ignored local artifacts include:
 - Signature validation is in `src/pagerbuddy/twilio_security.py`.
 - Notification dispatch and trial-recipient checks are in `src/pagerbuddy/notifications.py`.
 - User notification preferences use `notification_preferences.channels`; every configured channel is sent for each escalation attempt rather than rotating one channel per retry.
+- SMS notifications include incident IDs; inbound SMS accepts `ACK <incident ID>` and `RESOLVE <incident ID>` to disambiguate open incidents for the responder.
+- Email action links expire after `INCIDENT_ACTION_TOKEN_TTL_SECONDS` unless set to `0`; used tokens and closed-incident tokens are still rejected.
 - Recording downloads are in `src/pagerbuddy/recordings.py`.
 - Local transcription is in `src/pagerbuddy/transcription.py`.
 - Password hashing and RBAC dependencies are in `src/pagerbuddy/auth.py`.
@@ -152,6 +163,4 @@ Ignored local artifacts include:
 Known remaining work includes:
 
 - In-flight Twilio outbound call cancellation after acknowledgement.
-- SMS ambiguity resolution by incident ID.
-- Time-based email action-token expiry.
 - Alembic migrations.

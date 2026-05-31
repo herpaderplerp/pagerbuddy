@@ -160,7 +160,24 @@ def merge_incidents(db: Session, parent: Incident, children: list[Incident], act
     return parent
 
 
-def find_sms_target_incident(db: Session, user: User) -> Incident | None:
+def find_sms_target_incident(db: Session, user: User, incident_id: uuid.UUID | None = None) -> Incident | None:
+    if incident_id is not None:
+        incident = db.get(Incident, incident_id)
+        if incident is None or incident.status not in {IncidentStatus.triggered, IncidentStatus.acknowledged}:
+            return None
+        if incident.assigned_user_id == user.id:
+            return incident
+        attempted = db.scalar(
+            select(NotificationAttempt)
+            .where(
+                NotificationAttempt.incident_id == incident.id,
+                NotificationAttempt.user_id == user.id,
+                NotificationAttempt.status.in_([NotificationStatus.pending, NotificationStatus.delivered]),
+            )
+            .limit(1)
+        )
+        return incident if attempted is not None else None
+
     assigned = db.scalars(
         select(Incident)
         .where(Incident.assigned_user_id == user.id, Incident.status.in_([IncidentStatus.triggered, IncidentStatus.acknowledged]))

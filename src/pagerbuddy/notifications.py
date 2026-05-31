@@ -52,9 +52,10 @@ def sms_body(incident: Incident) -> str:
     excerpt = transcription[:160]
     return (
         f"[{incident.service.name}] [{incident.priority.value}] Incident triggered.\n"
+        f"Incident: {incident.id}\n"
         f"From: {incident.caller_id or 'Unknown'}\n"
         f"Voicemail: {excerpt}\n"
-        "Reply ACK to acknowledge. Reply RESOLVE to resolve."
+        "Reply ACK <incident ID> to acknowledge. Reply RESOLVE <incident ID> to resolve."
     )
 
 
@@ -67,7 +68,7 @@ def transcription_followup_sms_body(incident: Incident) -> str:
     return (
         f"[{incident.service.name}] Transcription received for {incident.priority.value} incident {incident.id}.\n"
         f"{transcription[:240]}\n"
-        "Reply ACK to acknowledge. Reply RESOLVE to resolve."
+        "Reply ACK <incident ID> to acknowledge. Reply RESOLVE <incident ID> to resolve."
     )
 
 

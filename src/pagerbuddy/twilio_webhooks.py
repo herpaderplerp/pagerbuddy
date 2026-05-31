@@ -16,7 +16,7 @@ from pagerbuddy.incidents import (
     notify_stakeholders_triggered,
     resolve_incident,
 )
-from pagerbuddy.models import Incident, NotificationAttempt, NotificationStatus, TimelineEventType, User
+from pagerbuddy.models import Incident, NotificationAttempt, NotificationStatus, SystemEvent, TimelineEventType, User
 from pagerbuddy.recordings import RecordingDownloadError, download_recording, recording_media_url
 from pagerbuddy.timeline import record_event
 from pagerbuddy.transcription import LocalTranscriptionError, transcribe_recording
@@ -26,6 +26,35 @@ router = APIRouter(prefix="/webhooks/twilio", tags=["twilio"])
 
 def twiml(body: str) -> Response:
     return Response(f'<?xml version="1.0" encoding="UTF-8"?><Response>{body}</Response>', media_type="application/xml")
+
+
+def _caller_allowed(from_number: str | None) -> bool:
+    settings = get_settings()
+    if not settings.inbound_caller_whitelist_enabled:
+        return True
+    return from_number in settings.inbound_caller_whitelist
+
+
+def _record_rejected_inbound_call(
+    db: Session,
+    to_number: str,
+    from_number: str | None,
+    call_sid: str | None,
+    service_id: uuid.UUID | None,
+) -> None:
+    db.add(
+        SystemEvent(
+            event_type="inbound_call_rejected",
+            payload={
+                "reason": "caller_not_whitelisted",
+                "to": to_number,
+                "from": from_number,
+                "call_sid": call_sid,
+                "service_id": str(service_id) if service_id else None,
+            },
+        )
+    )
+    db.commit()
 
 
 @router.post("/voice")
@@ -38,6 +67,10 @@ def inbound_voice(
     from pagerbuddy.models import Service
 
     service = db.scalar(select(Service).where(Service.inbound_phone_number == To))
+    if not _caller_allowed(From):
+        _record_rejected_inbound_call(db, To, From, CallSid, service.id if service else None)
+        return twiml("<Say>This phone number is not approved to open incidents.</Say><Hangup />")
+
     service_name = service.name if service else "the service"
     settings = get_settings()
     action = f"{settings.public_base_url}/webhooks/twilio/recording-complete"
@@ -160,6 +193,20 @@ def _outbound_message_twiml(incident: Incident) -> str:
     return f"{intro}<Say>{html.escape(fallback[:900])}</Say>{action_prompt}"
 
 
+def _parse_sms_command(body: str) -> tuple[str, uuid.UUID | None, str | None]:
+    parts = body.strip().split()
+    if not parts:
+        return "", None, None
+    command = parts[0].upper()
+    if len(parts) == 1:
+        return command, None, None
+    raw_incident_id = parts[1].removeprefix("#")
+    try:
+        return command, uuid.UUID(raw_incident_id), None
+    except ValueError:
+        return command, None, "Incident ID must be a UUID."
+
+
 @router.api_route("/outbound-response", methods=["GET", "POST"], include_in_schema=False)
 def outbound_response(
     incident_id: uuid.UUID = Query(...),
@@ -191,21 +238,26 @@ def inbound_sms(
     user = db.scalar(select(User).where(User.phone_number == From))
     if user is None:
         return twiml("<Message>No PagerBuddy user is registered for this phone number.</Message>")
-    command = Body.strip().upper()
-    incident = find_sms_target_incident(db, user)
+    command, incident_id, parse_error = _parse_sms_command(Body)
     if command in {"ACK", "ACKNOWLEDGE"}:
+        if parse_error:
+            return twiml(f"<Message>{html.escape(parse_error)}</Message>")
+        incident = find_sms_target_incident(db, user, incident_id)
         if incident is None:
-            return twiml("<Message>Multiple or no open incidents found. Reply with an incident ID in the API for now.</Message>")
+            return twiml("<Message>Multiple or no open incidents found. Reply ACK &lt;incident ID&gt;.</Message>")
         acknowledge_incident(db, incident, user, "sms")
         db.commit()
         return twiml(f"<Message>Acknowledged incident {incident.id}.</Message>")
     if command == "RESOLVE":
+        if parse_error:
+            return twiml(f"<Message>{html.escape(parse_error)}</Message>")
+        incident = find_sms_target_incident(db, user, incident_id)
         if incident is None:
-            return twiml("<Message>Multiple or no open incidents found. Reply with an incident ID in the API for now.</Message>")
+            return twiml("<Message>Multiple or no open incidents found. Reply RESOLVE &lt;incident ID&gt;.</Message>")
         resolve_incident(db, incident, user, "sms")
         db.commit()
         return twiml(f"<Message>Resolved incident {incident.id}.</Message>")
-    return twiml("<Message>Reply ACK to acknowledge or RESOLVE to resolve.</Message>")
+    return twiml("<Message>Reply ACK &lt;incident ID&gt; to acknowledge or RESOLVE &lt;incident ID&gt; to resolve.</Message>")
 
 
 @router.post("/status")

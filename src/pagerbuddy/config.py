@@ -17,12 +17,15 @@ class Settings(BaseSettings):
     twilio_from_number: str | None = None
     twilio_trial_allowed_number: str | None = None
     twilio_validate_requests: bool = True
+    inbound_caller_whitelist_enabled: bool = False
+    inbound_caller_whitelist_numbers: str = ""
 
     smtp_host: str = "localhost"
     smtp_port: int = 1025
     smtp_username: str | None = None
     smtp_password: str | None = None
     smtp_from: str = "alerts@pagerbuddy.local"
+    incident_action_token_ttl_seconds: int = 86400
 
     store_recordings_locally: bool = False
     recording_storage_dir: str = "recordings"
@@ -37,6 +40,10 @@ class Settings(BaseSettings):
     @property
     def admin_alert_email_list(self) -> list[str]:
         return [email.strip() for email in self.admin_alert_emails.split(",") if email.strip()]
+
+    @property
+    def inbound_caller_whitelist(self) -> set[str]:
+        return {number.strip() for number in self.inbound_caller_whitelist_numbers.split(",") if number.strip()}
 
 
 @lru_cache

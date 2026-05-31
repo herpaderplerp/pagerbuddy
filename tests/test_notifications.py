@@ -5,6 +5,7 @@ from pagerbuddy.config import Settings
 from pagerbuddy.database import Base
 from pagerbuddy.models import EscalationPolicy, Incident, NotificationAttempt, NotificationChannel, NotificationStatus, Service, User
 from pagerbuddy.notifications import NotificationClient, SendResult, dispatch_notification
+from pagerbuddy.notifications import sms_body
 
 
 class FakeNotificationClient:
@@ -89,6 +90,21 @@ def test_dispatch_notification_continues_other_channels_when_one_fails():
     assert attempts[0].status == NotificationStatus.failed
     assert attempts[1].status == NotificationStatus.delivered
     assert len(client.emails) == 1
+
+
+def test_sms_body_includes_incident_id_reply_format():
+    db = make_session()
+    user = User(name="Responder", email="responder@example.com", phone_number="+15550000001")
+    service = make_service(db)
+    incident = Incident(service=service, service_id=None, title="Incident")
+    db.add_all([user, service, incident])
+    db.flush()
+
+    body = sms_body(incident)
+
+    assert f"Incident: {incident.id}" in body
+    assert "Reply ACK <incident ID>" in body
+    assert "Reply RESOLVE <incident ID>" in body
 
 
 def test_twilio_trial_mode_rejects_non_allowed_sms_recipient():

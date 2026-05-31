@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker
 
 from pagerbuddy.config import Settings
 from pagerbuddy.database import Base
-from pagerbuddy.models import EscalationPolicy, Incident, Service, User
+from pagerbuddy.models import EscalationPolicy, Incident, Service, SystemEvent, User
 from pagerbuddy.twilio_webhooks import inbound_voice, outbound_response, recording_complete
 
 
@@ -26,6 +26,55 @@ def test_inbound_voice_disables_twilio_transcription_when_local_transcription_en
 
     assert 'transcribe="false"' in body
     assert "transcriptionCallback" not in body
+
+
+def test_inbound_voice_rejects_non_whitelisted_caller_and_logs_attempt(monkeypatch):
+    monkeypatch.setattr(
+        "pagerbuddy.twilio_webhooks.get_settings",
+        lambda: Settings(
+            public_base_url="https://pagerbuddy.example.com",
+            inbound_caller_whitelist_enabled=True,
+            inbound_caller_whitelist_numbers="+15550000003",
+        ),
+    )
+    db = make_session()
+    policy = EscalationPolicy(name="Production", steps=[])
+    db.add(policy)
+    db.flush()
+    service = Service(name="API", escalation_policy_id=policy.id, inbound_phone_number="+15551112222")
+    db.add(service)
+    db.commit()
+
+    response = inbound_voice(To=service.inbound_phone_number, From="+15550000002", CallSid="CA123", db=db)
+    body = response.body.decode()
+
+    assert "not approved to open incidents" in body
+    assert "<Record" not in body
+    event = db.scalar(select(SystemEvent).where(SystemEvent.event_type == "inbound_call_rejected"))
+    assert event is not None
+    assert event.payload["from"] == "+15550000002"
+    assert event.payload["to"] == service.inbound_phone_number
+    assert event.payload["call_sid"] == "CA123"
+    assert event.payload["service_id"] == str(service.id)
+
+
+def test_inbound_voice_allows_whitelisted_caller(monkeypatch):
+    monkeypatch.setattr(
+        "pagerbuddy.twilio_webhooks.get_settings",
+        lambda: Settings(
+            public_base_url="https://pagerbuddy.example.com",
+            inbound_caller_whitelist_enabled=True,
+            inbound_caller_whitelist_numbers="+15550000002",
+        ),
+    )
+    db = make_session()
+
+    response = inbound_voice(To="+15551112222", From="+15550000002", CallSid="CA123", db=db)
+    body = response.body.decode()
+
+    assert "<Record" in body
+    assert "not approved to open incidents" not in body
+    assert db.scalar(select(SystemEvent).where(SystemEvent.event_type == "inbound_call_rejected")) is None
 
 
 def test_outbound_response_plays_twilio_recording_url_when_available():
