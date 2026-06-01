@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from pagerbuddy import api, schemas
 from pagerbuddy.auth import Principal
 from pagerbuddy.database import Base
-from pagerbuddy.models import EscalationPolicy, StakeholderSubscription, User, UserRole
+from pagerbuddy.models import EscalationPolicy, Schedule, StakeholderSubscription, User, UserRole
 
 
 def make_session():
@@ -84,6 +84,44 @@ def test_disable_user_rejects_primary_contact_references():
         assert "Production catchall" in str(exc.detail)
     else:
         raise AssertionError("primary contact user should not be disabled")
+
+    assert db.get(User, user.id).is_active is True
+
+
+def test_disable_user_rejects_schedule_references():
+    db = make_session()
+    user = api.create_user(
+        schemas.UserCreate(
+            name="Scheduled responder",
+            email="scheduled@example.com",
+            phone_number="+15550000006",
+        ),
+        db,
+    )
+    schedule = Schedule(
+        name="Primary",
+        timezone="UTC",
+        layers=[{"users": [str(user.id)], "rotation_type": "daily", "starts_at": "2026-05-25T00:00:00+00:00"}],
+        overrides=[
+            {
+                "override_user_id": str(user.id),
+                "start": "2026-05-26T08:00:00+00:00",
+                "end": "2026-05-26T12:00:00+00:00",
+                "created_by": str(user.id),
+            }
+        ],
+    )
+    db.add(schedule)
+    db.commit()
+
+    try:
+        api.disable_user(user.id, db, Principal(username="bootstrap-admin", role=UserRole.admin, source="config"))
+    except HTTPException as exc:
+        assert exc.status_code == 409
+        assert "Primary schedule layer 1" in str(exc.detail)
+        assert "Primary schedule override 1" in str(exc.detail)
+    else:
+        raise AssertionError("scheduled user should not be disabled")
 
     assert db.get(User, user.id).is_active is True
 

@@ -77,6 +77,15 @@ def _primary_contact_references(db: Session, user_id: uuid.UUID) -> list[str]:
         for index, step in enumerate(policy.steps or [], start=1):
             if step.get("target_type") == "user" and step.get("target_id") == user_id_text:
                 references.append(f"{policy.name} step {index}")
+
+    schedules = db.scalars(select(Schedule)).all()
+    for schedule in schedules:
+        for index, layer in enumerate(schedule.layers or [], start=1):
+            if user_id_text in {str(layer_user_id) for layer_user_id in layer.get("users") or []}:
+                references.append(f"{schedule.name} schedule layer {index}")
+        for index, override in enumerate(schedule.overrides or [], start=1):
+            if str(override.get("override_user_id")) == user_id_text:
+                references.append(f"{schedule.name} schedule override {index}")
     return references
 
 
@@ -383,7 +392,7 @@ def get_schedule_gaps(
     _: Principal = Depends(READ_OPERATIONAL),
 ) -> list[dict[str, str]]:
     schedule = _get_or_404(db, Schedule, schedule_id)
-    return [{"start": gap.start.isoformat(), "end": gap.end.isoformat()} for gap in detect_schedule_gaps(schedule)]
+    return [{"start": gap.start.isoformat(), "end": gap.end.isoformat()} for gap in detect_schedule_gaps(schedule, db=db)]
 
 
 @router.post("/services/{service_id}/stakeholders/{user_id}", status_code=204)

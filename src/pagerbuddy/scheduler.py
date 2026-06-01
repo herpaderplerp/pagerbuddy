@@ -43,7 +43,7 @@ def run_once() -> int:
     with SessionLocal() as db:
         schedules = db.scalars(select(Schedule)).all()
         for schedule in schedules:
-            gaps = detect_schedule_gaps(schedule)
+            gaps = detect_schedule_gaps(schedule, db=db)
             if not gaps:
                 continue
             count += len(gaps)
