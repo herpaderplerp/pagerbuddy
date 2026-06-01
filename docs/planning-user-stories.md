@@ -10,12 +10,14 @@ PagerBuddy currently supports:
 - Local recording download and optional local transcription.
 - Escalation policies targeting users or schedules, with retries, repeats, and catchall users.
 - Phone, SMS, and email responder notifications.
+- In-flight Twilio outbound phone-call cancellation when an incident is acknowledged.
 - SMS commands for `ACK <incident ID>` and `RESOLVE <incident ID>`.
 - Email action tokens for acknowledge and resolve.
 - Incident lifecycle actions: create, update, start escalation, acknowledge, resolve, reopen, reassign, merge, add notes, and view timeline.
 - User, service, schedule, escalation policy, and stakeholder subscription management.
 - HTTP Basic authentication with admin, responder, and stakeholder roles.
 - Schedule overrides and schedule gap detection.
+- Structured schedule layer editing with a 7-day calendar preview.
 - Twilio request signature validation and optional inbound caller whitelist.
 
 ## User Stories
@@ -110,9 +112,9 @@ PagerBuddy currently supports:
    - Gap: Tables are created with `Base.metadata.create_all`, with a small compatibility check for user columns.
    - Why it matters: Production upgrades need explicit, reversible schema migrations and data backfills.
 
-2. In-flight Twilio outbound call cancellation after acknowledgement.
-   - Gap: Acknowledgement stops future escalation timers but does not cancel already-ringing outbound calls.
-   - Why it matters: Other responders may keep receiving calls for an incident that has already been acknowledged.
+2. Outbound call cancellation hardening.
+   - Gap: Acknowledgement now cancels active Twilio phone-call attempts, but there is no dedicated cancellation status or dashboard visibility for cancellation outcomes.
+   - Why it matters: Operators should be able to distinguish successfully canceled calls from calls that had already completed or could not be canceled.
 
 3. Deployment hardening.
    - Gap: Runtime is Docker/Podman friendly, but there is no documented production deployment pattern, backup/restore procedure, health/readiness split, or secret-management workflow.
@@ -154,9 +156,9 @@ PagerBuddy currently supports:
     - Gap: The dashboard uses JSON prompts for policy steps.
     - Future story: As an administrator, I want a guided policy builder with validation so I can configure schedules, users, timeouts, retries, repeats, and catchall without hand-editing JSON.
 
-12. Rich schedule editor and calendar view.
-    - Gap: The dashboard uses JSON prompts for schedule layers and overrides.
-    - Future story: As an administrator, I want a calendar view and guided rotation editor so schedule coverage can be inspected and changed safely.
+12. Schedule editor hardening.
+    - Gap: The dashboard now has structured schedule layer editing and a 7-day calendar preview, but override editing is still handled through a separate create form and there is no drag-and-drop calendar interaction.
+    - Future story: As an administrator, I want inline override management and direct calendar editing so schedule coverage changes can be made from the calendar itself.
 
 13. Escalation preview and simulation.
     - Gap: There is no preview of who would be paged for a sample incident/time.

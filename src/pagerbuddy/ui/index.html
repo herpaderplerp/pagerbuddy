@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PagerBuddy Admin</title>
-    <link rel="stylesheet" href="/dashboard/assets/styles.css?v=4" />
+    <link rel="stylesheet" href="/dashboard/assets/styles.css?v=6" />
   </head>
   <body>
     <div class="app-shell">
@@ -35,6 +35,9 @@
           <div class="topbar-actions">
             <a class="icon-button" href="/docs" title="Open API docs" aria-label="Open API docs">?</a>
             <button class="icon-button" id="refresh-button" type="button" title="Refresh" aria-label="Refresh">↻</button>
+            <form class="logout-form" method="post" action="/logout">
+              <button class="secondary-button" type="submit">Sign out</button>
+            </form>
           </div>
         </header>
 
@@ -188,7 +191,7 @@
         <section class="view" id="view-schedules" aria-labelledby="schedules-title">
           <div class="section-heading">
             <h2 id="schedules-title">Schedules</h2>
-            <button class="primary-button" data-admin-only form="schedule-form" type="submit"><span aria-hidden="true">+</span> Add schedule</button>
+            <button class="primary-button" data-admin-only form="schedule-form" type="submit"><span aria-hidden="true">✓</span> Save schedule</button>
           </div>
           <div class="split-layout">
             <section class="panel" data-admin-only>
@@ -196,11 +199,17 @@
               <div id="schedule-list" class="item-list"></div>
             </section>
             <section class="panel">
-              <div class="panel-heading"><h3>New schedule</h3></div>
-              <form id="schedule-form" class="form-grid">
+              <div class="panel-heading">
+                <h3 id="schedule-editor-title">New schedule</h3>
+                <div class="row-actions">
+                  <button class="secondary-button compact-button" id="schedule-new-button" data-admin-only type="button">New</button>
+                  <button class="secondary-button compact-button" id="schedule-add-layer-button" data-admin-only type="button">Add layer</button>
+                </div>
+              </div>
+              <form id="schedule-form" class="form-grid schedule-editor">
                 <label>Name<input name="name" required /></label>
                 <label>Timezone<input name="timezone" value="America/Toronto" required /></label>
-                <label class="span-2">Layers JSON<textarea name="layers" rows="8" spellcheck="false">[]</textarea></label>
+                <div class="span-2 schedule-layer-list" id="schedule-layer-list"></div>
               </form>
             </section>
           </div>
@@ -215,6 +224,13 @@
               <label>End<input name="end" type="datetime-local" required /></label>
               <button class="secondary-button" type="submit"><span aria-hidden="true">✓</span> Save override</button>
             </form>
+          </section>
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>Calendar</h3>
+              <span id="schedule-calendar-title" class="muted"></span>
+            </div>
+            <div id="schedule-calendar" class="schedule-calendar"></div>
           </section>
         </section>
 
@@ -242,6 +258,6 @@
         </section>
       </main>
     </div>
-    <script type="module" src="/dashboard/assets/app.js?v=4"></script>
+    <script type="module" src="/dashboard/assets/app.js?v=6"></script>
   </body>
 </html>

@@ -39,7 +39,7 @@ http://localhost:8000/dashboard
 
 ## Authentication
 
-Admin surfaces require HTTP Basic auth:
+Admin surfaces require authentication through the `/login` page. Successful login sets an HTTP-only same-site session cookie for the dashboard and same-origin API calls. HTTP Basic credentials are still accepted when an API client explicitly sends an `Authorization: Basic ...` header, but unauthenticated browser requests should not receive a Basic-auth challenge.
 
 - `/dashboard`
 - `/docs`
@@ -48,6 +48,8 @@ Admin surfaces require HTTP Basic auth:
 
 Public paths:
 
+- `/login`
+- `/logout`
 - `/healthz`
 - `/webhooks/twilio/...`
 - `/dashboard/assets/...`
@@ -61,7 +63,7 @@ Role enforcement:
 - `responder`: operational incident actions and read access to operational configuration.
 - `stakeholder`: read-only operational access.
 
-If `ADMIN_PASSWORD` is blank, the bootstrap admin is disabled; database users with passwords can still authenticate. The current local ignored `.env` may contain development credentials, but do not copy secrets into tracked files.
+If `ADMIN_PASSWORD` is blank, the bootstrap admin is disabled; database users with passwords can still authenticate. `SESSION_SECRET` signs login cookies and should be set to a stable secret outside local development. The current local ignored `.env` may contain development credentials, but do not copy secrets into tracked files.
 
 ## Twilio And ngrok
 
@@ -146,6 +148,7 @@ Ignored local artifacts include:
 - Twilio webhooks are under `src/pagerbuddy/twilio_webhooks.py`.
 - Signature validation is in `src/pagerbuddy/twilio_security.py`.
 - Notification dispatch and trial-recipient checks are in `src/pagerbuddy/notifications.py`.
+- Acknowledging an incident cancels in-flight Twilio outbound phone calls before marking active notification attempts as acknowledged.
 - User notification preferences use `notification_preferences.channels`; every configured channel is sent for each escalation attempt rather than rotating one channel per retry.
 - SMS notifications include incident IDs; inbound SMS accepts `ACK <incident ID>` and `RESOLVE <incident ID>` to disambiguate open incidents for the responder.
 - Email action links expire after `INCIDENT_ACTION_TOKEN_TTL_SECONDS` unless set to `0`; used tokens and closed-incident tokens are still rejected.
@@ -156,11 +159,10 @@ Ignored local artifacts include:
 - `Base.metadata.create_all` is supplemented by a small compatibility schema check for user-management columns while the project does not yet use Alembic.
 - Admin dashboard JavaScript calls the same REST API and must keep using same-origin authenticated requests.
 - The dashboard is intended to be the primary management surface. When admin REST endpoints are added or changed, expose the action in `src/pagerbuddy/ui` as well.
-- Current dashboard management coverage includes create/list/update/delete for users, services, schedules, and escalation policies; stakeholder subscribe/unsubscribe; schedule gap checks; and incident create/update/escalation/acknowledge/resolve/reopen/reassign/merge/note/timeline actions.
+- Current dashboard management coverage includes create/list/update/delete for users, services, schedules, and escalation policies; stakeholder subscribe/unsubscribe; schedule gap checks; structured schedule layer editing with calendar preview; and incident create/update/escalation/acknowledge/resolve/reopen/reassign/merge/note/timeline actions.
 
 ## Current Gaps From Original Spec
 
 Known remaining work includes:
 
-- In-flight Twilio outbound call cancellation after acknowledgement.
 - Alembic migrations.

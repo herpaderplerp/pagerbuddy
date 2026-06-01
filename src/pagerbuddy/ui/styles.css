@@ -161,6 +161,10 @@ small {
   gap: 10px;
 }
 
+.logout-form {
+  margin: 0;
+}
+
 .icon-button,
 .primary-button,
 .secondary-button,
@@ -431,6 +435,11 @@ textarea {
   background: #fbfcfd;
 }
 
+.selected-item {
+  border-color: var(--accent);
+  background: #eef7fb;
+}
+
 .item-header {
   display: flex;
   justify-content: space-between;
@@ -489,6 +498,112 @@ td .row-actions {
   font-size: 13px;
 }
 
+.schedule-editor {
+  align-items: start;
+}
+
+.schedule-layer-list {
+  display: grid;
+  gap: 12px;
+}
+
+.schedule-layer {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+  overflow: hidden;
+}
+
+.schedule-layer-heading {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.schedule-layer-heading .row-actions {
+  margin-top: 0;
+}
+
+.embedded-grid {
+  padding: 12px;
+}
+
+.weekday-group {
+  align-items: center;
+}
+
+.compact-empty {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.schedule-calendar {
+  overflow-x: auto;
+  padding: 16px;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--calendar-columns), minmax(132px, 1fr));
+  gap: 8px;
+  min-width: 840px;
+}
+
+.calendar-day-head,
+.calendar-slot {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.calendar-day-head {
+  padding: 10px;
+  background: #101820;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.calendar-slot {
+  display: grid;
+  min-height: 86px;
+  align-content: start;
+  gap: 4px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.calendar-slot span,
+.calendar-slot small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.calendar-slot strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.calendar-slot.covered {
+  border-color: #b9dfc9;
+  background: #f1fbf5;
+}
+
+.calendar-slot.uncovered {
+  border-color: #ffd1cc;
+  background: #fff7f6;
+}
+
+.calendar-slot.override {
+  border-color: #f0b429;
+  background: #fffbeb;
+}
+
 .timeline {
   display: grid;
   gap: 8px;
@@ -538,8 +653,13 @@ td .row-actions {
   .metric-grid,
   .split-layout,
   .split-layout.wide-left,
-  .form-grid.four {
+  .form-grid.four,
+  .calendar-grid {
     grid-template-columns: 1fr;
+  }
+
+  .calendar-grid {
+    min-width: 0;
   }
 }
 

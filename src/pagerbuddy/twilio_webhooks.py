@@ -276,6 +276,8 @@ def notification_status(
     attempt = db.scalar(select(NotificationAttempt).where(NotificationAttempt.provider_message_id == provider_id))
     if attempt is None:
         return {"status": "unknown_attempt"}
+    if attempt.status == NotificationStatus.acknowledged:
+        return {"status": "ok"}
 
     failed_statuses = {"failed", "undelivered", "busy", "no-answer", "canceled"}
     delivered_statuses = {"sent", "delivered", "answered", "completed"}

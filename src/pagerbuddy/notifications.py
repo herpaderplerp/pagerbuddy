@@ -145,6 +145,17 @@ class NotificationClient:
         )
         return SendResult(call.sid)
 
+    def cancel_phone_call(self, provider_message_id: str) -> SendResult:
+        if provider_message_id.startswith("dry-run"):
+            return SendResult(provider_message_id)
+        if not (self.settings.twilio_account_sid and self.settings.twilio_auth_token):
+            return SendResult(provider_message_id)
+        from twilio.rest import Client
+
+        client = Client(self.settings.twilio_account_sid, self.settings.twilio_auth_token)
+        client.calls(provider_message_id).update(status="canceled")
+        return SendResult(provider_message_id)
+
     def send_sms(self, incident: Incident, user: User) -> SendResult:
         return self.send_sms_text(incident, user, sms_body(incident))
 
@@ -275,6 +286,42 @@ def dispatch_notification(
                 },
             )
         attempts.append(attempt)
+    return attempts
+
+
+def cancel_in_flight_phone_calls(
+    db: Session,
+    incident: Incident,
+    client: NotificationClient | None = None,
+) -> list[NotificationAttempt]:
+    notifier = client or NotificationClient()
+    attempts = db.scalars(
+        select(NotificationAttempt).where(
+            NotificationAttempt.incident_id == incident.id,
+            NotificationAttempt.channel == NotificationChannel.phone_call,
+            NotificationAttempt.provider_message_id.is_not(None),
+            NotificationAttempt.status.in_([NotificationStatus.pending, NotificationStatus.delivered]),
+        )
+    ).all()
+
+    for attempt in attempts:
+        try:
+            notifier.cancel_phone_call(attempt.provider_message_id or "")
+        except Exception as exc:
+            attempt.error = f"phone cancellation failed: {exc}"
+            record_event(
+                db,
+                incident.id,
+                TimelineEventType.notification_failed,
+                {
+                    "user_id": str(attempt.user_id),
+                    "channel": NotificationChannel.phone_call.value,
+                    "attempt_number": attempt.attempt_number,
+                    "provider_message_id": attempt.provider_message_id,
+                    "follow_up": "cancel_in_flight_phone_call",
+                    "error": str(exc),
+                },
+            )
     return attempts
 
 

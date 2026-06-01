@@ -5,8 +5,17 @@ from sqlalchemy.orm import sessionmaker
 
 from pagerbuddy.config import Settings
 from pagerbuddy.database import Base
-from pagerbuddy.models import EscalationPolicy, Incident, Service, SystemEvent, User
-from pagerbuddy.twilio_webhooks import inbound_voice, outbound_response, recording_complete
+from pagerbuddy.models import (
+    EscalationPolicy,
+    Incident,
+    NotificationAttempt,
+    NotificationChannel,
+    NotificationStatus,
+    Service,
+    SystemEvent,
+    User,
+)
+from pagerbuddy.twilio_webhooks import inbound_voice, notification_status, outbound_response, recording_complete
 
 
 def make_session():
@@ -125,6 +134,38 @@ def test_outbound_response_speaks_transcription_when_recording_url_missing():
 
     assert "<Play>" not in body
     assert "Database is down." in body
+
+
+def test_status_callback_does_not_downgrade_acknowledged_attempt():
+    db = make_session()
+    user = User(name="Responder", email="responder@example.com", phone_number="+15550000001")
+    db.add(user)
+    db.flush()
+    policy = EscalationPolicy(name="Production", steps=[])
+    db.add(policy)
+    db.flush()
+    service = Service(name="API", escalation_policy_id=policy.id, inbound_phone_number="+15551112222")
+    db.add(service)
+    db.flush()
+    incident = Incident(service_id=service.id, title="Voicemail")
+    db.add(incident)
+    db.flush()
+    attempt = NotificationAttempt(
+        incident_id=incident.id,
+        user_id=user.id,
+        channel=NotificationChannel.phone_call,
+        status=NotificationStatus.acknowledged,
+        attempt_number=1,
+        escalation_step=0,
+        provider_message_id="CA123",
+    )
+    db.add(attempt)
+    db.commit()
+
+    response = notification_status(MessageSid=None, MessageStatus=None, CallSid="CA123", CallStatus="canceled", db=db)
+
+    assert response == {"status": "ok"}
+    assert attempt.status == NotificationStatus.acknowledged
 
 
 def test_recording_callback_downloads_and_transcribes_before_escalation(tmp_path, monkeypatch):

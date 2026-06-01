@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
     admin_username: str = "admin"
     admin_password: str | None = None
+    session_secret: str | None = None
+    session_ttl_seconds: int = 28800
 
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None

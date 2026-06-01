@@ -7,10 +7,26 @@ const state = {
   scheduleGaps: {},
   me: null,
   selectedIncidentId: null,
+  selectedScheduleId: null,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+const WEEKDAYS = [
+  ["mon", "Mon"],
+  ["tue", "Tue"],
+  ["wed", "Wed"],
+  ["thu", "Thu"],
+  ["fri", "Fri"],
+  ["sat", "Sat"],
+  ["sun", "Sun"],
+];
+const CALENDAR_SLOTS = [
+  ["00:00", 0],
+  ["06:00", 6],
+  ["12:00", 12],
+  ["18:00", 18],
+];
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -41,6 +57,10 @@ function responders() {
   return state.users.filter((user) => user.role !== "stakeholder");
 }
 
+function activeResponders() {
+  return responders().filter((user) => user.is_active);
+}
+
 function channelValue(user) {
   return (user.notification_preferences?.channels || ["phone_call", "sms", "email"]).join(",");
 }
@@ -68,6 +88,22 @@ function formatDate(value) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function formatDateOnly(value) {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(value);
+}
+
+function formatDateTimeLocal(value) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (part) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function showToast(message, isError = false) {
@@ -111,6 +147,9 @@ async function refreshData() {
   Object.assign(state, { me, users, services, schedules, policies, incidents });
   if (!incidents.some((incident) => incident.id === state.selectedIncidentId)) {
     state.selectedIncidentId = incidents[0]?.id ?? null;
+  }
+  if (!schedules.some((schedule) => schedule.id === state.selectedScheduleId)) {
+    state.selectedScheduleId = schedules[0]?.id ?? null;
   }
   renderAll();
   $("#last-refresh").textContent = `Last refreshed ${new Date().toLocaleTimeString()}`;
@@ -432,7 +471,7 @@ function renderSchedules() {
         .map((schedule) => {
           const gaps = state.scheduleGaps[schedule.id];
           return `
-            <div class="item">
+            <div class="item ${schedule.id === state.selectedScheduleId ? "selected-item" : ""}">
               <div class="item-header"><strong>${escapeHtml(schedule.name)}</strong><span>${escapeHtml(schedule.timezone)}</span></div>
               <small>${schedule.layers.length} layer(s), ${schedule.overrides.length} override(s)</small>
               <div class="mono">${escapeHtml(schedule.id)}</div>
@@ -445,7 +484,7 @@ function renderSchedules() {
                 <button class="secondary-button compact-button" data-schedule-gaps="${schedule.id}" type="button">Gaps</button>
                 ${
                   isAdmin()
-                    ? `<button class="secondary-button compact-button" data-schedule-edit="${schedule.id}" type="button">Edit</button>
+                    ? `<button class="secondary-button compact-button" data-schedule-edit="${schedule.id}" type="button">Open</button>
                        <button class="danger-button compact-button" data-schedule-delete="${schedule.id}" type="button">Delete</button>`
                     : ""
                 }
@@ -463,6 +502,256 @@ function renderSchedules() {
   $$("[data-schedule-delete]").forEach((button) => {
     button.addEventListener("click", () => deleteResource(`/schedules/${button.dataset.scheduleDelete}`, "schedule"));
   });
+  renderScheduleEditor();
+  renderScheduleCalendar();
+}
+
+function currentScheduleDraftSource() {
+  return state.schedules.find((schedule) => schedule.id === state.selectedScheduleId) || {
+    name: "",
+    timezone: "America/Toronto",
+    layers: [],
+    overrides: [],
+  };
+}
+
+function userOptions(selectedIds = []) {
+  const selected = new Set((selectedIds || []).map(String));
+  return state.users
+    .filter((user) => user.role !== "stakeholder" && (user.is_active || selected.has(user.id)))
+    .map((user) => `<option value="${user.id}" ${selected.has(user.id) ? "selected" : ""}>${escapeHtml(user.name)}</option>`)
+    .join("");
+}
+
+function renderScheduleEditor() {
+  const form = $("#schedule-form");
+  const title = $("#schedule-editor-title");
+  if (!form || document.activeElement.closest?.("#schedule-form")) return;
+  const schedule = currentScheduleDraftSource();
+  title.textContent = state.selectedScheduleId ? `Edit ${schedule.name}` : "New schedule";
+  form.elements.name.value = schedule.name || "";
+  form.elements.timezone.value = schedule.timezone || "America/Toronto";
+  $("#schedule-layer-list").innerHTML = (schedule.layers || []).length
+    ? schedule.layers.map((layer, index) => scheduleLayerHtml(layer, index)).join("")
+    : '<div class="empty compact-empty">No layers configured</div>';
+  wireScheduleEditorControls();
+}
+
+function scheduleLayerHtml(layer, index) {
+  const restriction = (layer.restrictions || [])[0] || {};
+  const days = new Set((restriction.days || []).map((day) => String(day).slice(0, 3).toLowerCase()));
+  const rotationType = layer.rotation_type || "weekly";
+  return `
+    <div class="schedule-layer" data-layer-index="${index}">
+      <div class="schedule-layer-heading">
+        <strong>Layer ${index + 1}</strong>
+        <div class="row-actions">
+          <button class="secondary-button compact-button" data-layer-move="-1" type="button">Up</button>
+          <button class="secondary-button compact-button" data-layer-move="1" type="button">Down</button>
+          <button class="danger-button compact-button" data-layer-delete type="button">Remove</button>
+        </div>
+      </div>
+      <div class="form-grid embedded-grid">
+        <label>Layer name<input data-layer-field="name" value="${escapeHtml(layer.name || `Layer ${index + 1}`)}" /></label>
+        <label>Rotation
+          <select data-layer-field="rotation_type">
+            <option value="daily" ${rotationType === "daily" ? "selected" : ""}>Daily</option>
+            <option value="weekly" ${rotationType === "weekly" ? "selected" : ""}>Weekly</option>
+            <option value="custom" ${rotationType === "custom" ? "selected" : ""}>Custom</option>
+          </select>
+        </label>
+        <label>Custom hours<input data-layer-field="rotation_length_hours" type="number" min="1" value="${escapeHtml(layer.rotation_length_hours || 24)}" /></label>
+        <label>Starts at<input data-layer-field="starts_at" type="datetime-local" value="${escapeHtml(formatDateTimeLocal(layer.starts_at || new Date()))}" /></label>
+        <label class="span-2">Responders<select data-layer-field="users" multiple size="5">${userOptions(layer.users)}</select></label>
+        <fieldset class="span-2 check-group weekday-group">
+          <legend>Active days</legend>
+          ${WEEKDAYS.map(([value, label]) => `<label class="check-row"><input data-layer-day="${value}" type="checkbox" ${days.has(value) ? "checked" : ""} /> ${label}</label>`).join("")}
+        </fieldset>
+        <label>Window start<input data-layer-field="start_time" type="time" value="${escapeHtml((restriction.start_time || "00:00").slice(0, 5))}" /></label>
+        <label>Window end<input data-layer-field="end_time" type="time" value="${escapeHtml((restriction.end_time || "23:59").slice(0, 5))}" /></label>
+      </div>
+    </div>`;
+}
+
+function wireScheduleEditorControls() {
+  $("#schedule-layer-list").querySelectorAll("input, select").forEach((element) => {
+    element.addEventListener("change", renderScheduleCalendar);
+    element.addEventListener("input", renderScheduleCalendar);
+  });
+  $$("[data-layer-delete]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const layers = collectSchedulePayload({ allowEmptyLayers: true }).layers;
+      layers.splice(Number(button.closest(".schedule-layer").dataset.layerIndex), 1);
+      replaceScheduleLayerDraft(layers);
+    });
+  });
+  $$("[data-layer-move]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const layers = collectSchedulePayload({ allowEmptyLayers: true }).layers;
+      const from = Number(button.closest(".schedule-layer").dataset.layerIndex);
+      const to = from + Number(button.dataset.layerMove);
+      if (to < 0 || to >= layers.length) return;
+      [layers[from], layers[to]] = [layers[to], layers[from]];
+      replaceScheduleLayerDraft(layers);
+    });
+  });
+}
+
+function replaceScheduleLayerDraft(layers) {
+  $("#schedule-layer-list").innerHTML = layers.length
+    ? layers.map((layer, index) => scheduleLayerHtml(layer, index)).join("")
+    : '<div class="empty compact-empty">No layers configured</div>';
+  wireScheduleEditorControls();
+  renderScheduleCalendar();
+}
+
+function addScheduleLayer() {
+  const layers = collectSchedulePayload({ allowEmptyLayers: true }).layers;
+  layers.push({
+    name: `Layer ${layers.length + 1}`,
+    users: activeResponders()[0] ? [activeResponders()[0].id] : [],
+    rotation_type: "weekly",
+    starts_at: new Date().toISOString(),
+  });
+  replaceScheduleLayerDraft(layers);
+}
+
+function newScheduleDraft() {
+  state.selectedScheduleId = null;
+  $("#schedule-form").reset();
+  $("#schedule-editor-title").textContent = "New schedule";
+  $("#schedule-layer-list").innerHTML = '<div class="empty compact-empty">No layers configured</div>';
+  renderSchedules();
+  renderScheduleCalendar();
+}
+
+function collectSchedulePayload(options = {}) {
+  const form = $("#schedule-form");
+  const layers = $$(".schedule-layer", form).map((layerElement) => {
+    const field = (name) => $(`[data-layer-field="${name}"]`, layerElement);
+    const users = $$("[data-layer-field=\"users\"] option:checked", layerElement).map((option) => option.value);
+    const days = $$("[data-layer-day]:checked", layerElement).map((input) => input.dataset.layerDay);
+    const startTime = field("start_time").value || "00:00";
+    const endTime = field("end_time").value || "23:59";
+    const layer = {
+      name: field("name").value || "Layer",
+      users,
+      rotation_type: field("rotation_type").value || "weekly",
+      starts_at: localDateToIso(field("starts_at").value) || new Date().toISOString(),
+    };
+    if (layer.rotation_type === "custom") {
+      layer.rotation_length_hours = Math.max(1, Number(field("rotation_length_hours").value || 24));
+    }
+    if (days.length || startTime !== "00:00" || endTime !== "23:59") {
+      layer.restrictions = [{ days, start_time: startTime, end_time: endTime }];
+    }
+    return layer;
+  });
+  if (!options.allowEmptyLayers && layers.some((layer) => !layer.users.length)) {
+    throw new Error("Each schedule layer needs at least one responder");
+  }
+  return {
+    name: form.elements.name.value,
+    timezone: form.elements.timezone.value,
+    layers,
+    overrides: state.selectedScheduleId ? currentScheduleDraftSource().overrides || [] : [],
+  };
+}
+
+function renderScheduleCalendar() {
+  const calendar = $("#schedule-calendar");
+  const title = $("#schedule-calendar-title");
+  if (!calendar || !title) return;
+  let schedule;
+  try {
+    schedule = { ...collectSchedulePayload({ allowEmptyLayers: true }), id: state.selectedScheduleId };
+  } catch {
+    schedule = currentScheduleDraftSource();
+  }
+  title.textContent = schedule.name ? `${schedule.name} - ${schedule.timezone}` : schedule.timezone || "";
+  if (!schedule.layers.length && !schedule.overrides.length) {
+    calendar.innerHTML = '<div class="empty">No calendar coverage</div>';
+    return;
+  }
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const day = new Date(start);
+    day.setDate(start.getDate() + index);
+    return day;
+  });
+  calendar.innerHTML = `
+    <div class="calendar-grid" style="--calendar-columns:${days.length}">
+      ${days.map((day) => `<div class="calendar-day-head">${escapeHtml(formatDateOnly(day))}</div>`).join("")}
+      ${CALENDAR_SLOTS.map(([label, hour]) =>
+        days
+          .map((day) => {
+            const slot = new Date(day);
+            slot.setHours(hour, 0, 0, 0);
+            const resolution = resolveSchedulePreview(schedule, slot);
+            const covered = Boolean(resolution.userId);
+            return `
+              <div class="calendar-slot ${covered ? "covered" : "uncovered"} ${resolution.override ? "override" : ""}">
+                <span>${label}</span>
+                <strong>${escapeHtml(covered ? userName(resolution.userId) : "Uncovered")}</strong>
+                <small>${escapeHtml(resolution.label)}</small>
+              </div>`;
+          })
+          .join("")
+      ).join("")}
+    </div>`;
+}
+
+function resolveSchedulePreview(schedule, at) {
+  const timezone = schedule.timezone || "UTC";
+  for (const override of schedule.overrides || []) {
+    const start = new Date(override.start);
+    const end = new Date(override.end);
+    if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime()) && start <= at && at < end) {
+      return { userId: override.override_user_id, label: override.reason || "Override", override: true };
+    }
+  }
+  for (const layer of schedule.layers || []) {
+    if (!layer.users?.length || !layerActive(layer, at, timezone)) continue;
+    const startsAt = new Date(layer.starts_at || at);
+    const elapsedHours = Math.max(0, Math.floor((at - startsAt) / 3600000));
+    const rotationHours = layer.rotation_type === "daily" ? 24 : layer.rotation_type === "weekly" ? 168 : Number(layer.rotation_length_hours || 24);
+    const index = Math.floor(elapsedHours / Math.max(1, rotationHours)) % layer.users.length;
+    return { userId: layer.users[index], label: layer.name || "Layer", override: false };
+  }
+  return { userId: null, label: "No layer", override: false };
+}
+
+function layerActive(layer, at, timezone) {
+  const restrictions = layer.restrictions || [];
+  if (!restrictions.length) return true;
+  return restrictions.some((restriction) => restrictionActive(restriction, at, timezone));
+}
+
+function restrictionActive(restriction, at, timezone) {
+  const parts = zonedParts(at, timezone);
+  const days = (restriction.days || []).map((day) => String(day).slice(0, 3).toLowerCase());
+  if (days.length && !days.includes(parts.weekday)) return false;
+  const start = restriction.start_time || "00:00";
+  const end = restriction.end_time || "23:59";
+  const current = `${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")}`;
+  return start <= end ? start <= current && current <= end : current >= start || current <= end;
+}
+
+function zonedParts(date, timezone) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(date);
+    const value = (type) => parts.find((part) => part.type === type)?.value;
+    return { weekday: value("weekday").slice(0, 3).toLowerCase(), hour: Number(value("hour")), minute: Number(value("minute")) };
+  } catch {
+    return { weekday: ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][date.getDay()], hour: date.getHours(), minute: date.getMinutes() };
+  }
 }
 
 function renderPolicies() {
@@ -645,19 +934,8 @@ async function editPolicy(policy) {
 
 async function editSchedule(schedule) {
   if (!schedule) return;
-  try {
-    const name = promptText("Name", schedule.name);
-    if (name === null) return;
-    const timezone = promptText("Timezone", schedule.timezone);
-    if (timezone === null) return;
-    const layers = promptJson("Layers JSON", schedule.layers);
-    if (layers === null) return;
-    const overrides = promptJson("Overrides JSON", schedule.overrides);
-    if (overrides === null) return;
-    await mutate("PATCH", `/schedules/${schedule.id}`, { name, timezone, layers, overrides }, "Schedule updated");
-  } catch (error) {
-    showToast(error.message, true);
-  }
+  state.selectedScheduleId = schedule.id;
+  renderSchedules();
 }
 
 async function editIncident(incident) {
@@ -742,10 +1020,21 @@ function wireForms() {
   $("#schedule-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      const data = Object.fromEntries(new FormData(event.currentTarget).entries());
-      data.layers = JSON.parse(data.layers || "[]");
-      data.overrides = [];
-      if (await submitJson("/schedules", data, "Schedule created")) event.currentTarget.reset();
+      const data = collectSchedulePayload();
+      if (!data.name.trim()) {
+        showToast("Schedule name is required", true);
+        return;
+      }
+      if (!data.timezone.trim()) {
+        showToast("Schedule timezone is required", true);
+        return;
+      }
+      const existing = state.schedules.find((schedule) => schedule.id === state.selectedScheduleId);
+      if (existing) {
+        await mutate("PATCH", `/schedules/${existing.id}`, data, "Schedule updated");
+      } else if (await submitJson("/schedules", data, "Schedule created")) {
+        newScheduleDraft();
+      }
     } catch (error) {
       showToast(error.message, true);
     }
@@ -779,6 +1068,10 @@ function wireNavigation() {
   });
   $("#refresh-button").addEventListener("click", () => refreshData().catch((error) => showToast(error.message, true)));
   $("#incident-filter").addEventListener("change", renderIncidents);
+  $("#schedule-new-button").addEventListener("click", newScheduleDraft);
+  $("#schedule-add-layer-button").addEventListener("click", addScheduleLayer);
+  $("#schedule-form").elements.name.addEventListener("input", renderScheduleCalendar);
+  $("#schedule-form").elements.timezone.addEventListener("input", renderScheduleCalendar);
 }
 
 function showView(view) {

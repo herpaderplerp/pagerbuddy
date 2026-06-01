@@ -15,7 +15,7 @@ from pagerbuddy.models import (
     TimelineEventType,
     User,
 )
-from pagerbuddy.notifications import NotificationClient, dispatch_transcription_followup
+from pagerbuddy.notifications import NotificationClient, cancel_in_flight_phone_calls, dispatch_transcription_followup
 from pagerbuddy.timeline import record_event
 
 
@@ -75,10 +75,17 @@ def apply_transcription(
     return incident
 
 
-def acknowledge_incident(db: Session, incident: Incident, user: User, channel: str) -> Incident:
+def acknowledge_incident(
+    db: Session,
+    incident: Incident,
+    user: User,
+    channel: str,
+    notification_client: NotificationClient | None = None,
+) -> Incident:
     if incident.status == IncidentStatus.resolved:
         return incident
     now = datetime.now(timezone.utc)
+    cancel_in_flight_phone_calls(db, incident, client=notification_client)
     incident.status = IncidentStatus.acknowledged
     incident.assigned_user_id = user.id
     incident.acknowledged_at = now

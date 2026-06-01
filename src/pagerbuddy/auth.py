@@ -1,7 +1,9 @@
 import base64
 import hashlib
 import hmac
+import json
 import secrets
+import time
 from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request
@@ -27,6 +29,8 @@ PROTECTED_PREFIXES = (
 )
 
 PUBLIC_PREFIXES = (
+    "/login",
+    "/logout",
     "/dashboard/assets",
     "/healthz",
     "/webhooks/twilio",
@@ -35,6 +39,7 @@ PUBLIC_PREFIXES = (
 
 PASSWORD_ALGORITHM = "pbkdf2_sha256"
 PASSWORD_ITERATIONS = 260_000
+SESSION_COOKIE_NAME = "pagerbuddy_session"
 
 
 @dataclass(frozen=True)
@@ -96,11 +101,7 @@ def basic_auth_valid(headers: Headers, settings: Settings) -> bool:
     return principal is not None and principal.source == "config"
 
 
-def authenticate_basic(headers: Headers, settings: Settings, db: Session | None = None) -> Principal | None:
-    credentials = _decode_basic_auth(headers)
-    if credentials is None:
-        return None
-    username, password = credentials
+def authenticate_credentials(username: str, password: str, settings: Settings, db: Session | None = None) -> Principal | None:
     if settings.admin_password and secrets.compare_digest(username, settings.admin_username):
         if secrets.compare_digest(password, settings.admin_password):
             return Principal(username=username, role=UserRole.admin, source="config")
@@ -112,18 +113,75 @@ def authenticate_basic(headers: Headers, settings: Settings, db: Session | None 
     return Principal(username=user.email, role=user.role, user_id=str(user.id), source="user")
 
 
+def authenticate_basic(headers: Headers, settings: Settings, db: Session | None = None) -> Principal | None:
+    credentials = _decode_basic_auth(headers)
+    if credentials is None:
+        return None
+    username, password = credentials
+    return authenticate_credentials(username, password, settings, db)
+
+
+def _session_secret(settings: Settings) -> str:
+    return settings.session_secret or settings.admin_password or settings.twilio_auth_token or "pagerbuddy-development-session-secret"
+
+
+def create_session_token(principal: Principal, settings: Settings, now: int | None = None) -> str:
+    issued_at = int(now or time.time())
+    payload = {
+        "username": principal.username,
+        "role": principal.role.value,
+        "user_id": principal.user_id,
+        "source": principal.source,
+        "exp": issued_at + settings.session_ttl_seconds,
+    }
+    encoded_payload = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).decode("ascii")
+    signature = hmac.new(_session_secret(settings).encode("utf-8"), encoded_payload.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{encoded_payload}.{signature}"
+
+
+def authenticate_session_cookie(token: str | None, settings: Settings, now: int | None = None) -> Principal | None:
+    if not token or "." not in token:
+        return None
+    encoded_payload, signature = token.rsplit(".", 1)
+    expected = hmac.new(_session_secret(settings).encode("utf-8"), encoded_payload.encode("ascii"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        return None
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(encoded_payload.encode("ascii")).decode("utf-8"))
+        if int(payload["exp"]) < int(now or time.time()):
+            return None
+        return Principal(
+            username=str(payload["username"]),
+            role=UserRole(str(payload["role"])),
+            user_id=payload.get("user_id"),
+            source=str(payload.get("source", "user")),
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def authenticate_request(request: Request, settings: Settings, db: Session | None = None) -> Principal | None:
+    principal = authenticate_session_cookie(request.cookies.get(SESSION_COOKIE_NAME), settings)
+    if principal is not None:
+        if principal.source == "user" and db is not None and principal.user_id:
+            user = db.get(User, principal.user_id)
+            if user is None or not user.is_active:
+                return None
+            return Principal(username=user.email, role=user.role, user_id=str(user.id), source="user")
+        return principal
+    return authenticate_basic(request.headers, settings, db)
+
+
 def current_principal(
     request: Request,
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> Principal:
-    principal = authenticate_basic(request.headers, settings, db)
+    principal = getattr(request.state, "principal", None) or authenticate_request(request, settings, db)
     if principal is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Authentication required",
-            headers={"WWW-Authenticate": 'Basic realm="PagerBuddy Admin"'},
-        )
+        raise HTTPException(status_code=401, detail="Authentication required")
     return principal
 
 

@@ -3,6 +3,7 @@ from sqlalchemy.orm import sessionmaker
 
 from pagerbuddy.config import Settings
 from pagerbuddy.database import Base
+from pagerbuddy.incidents import acknowledge_incident
 from pagerbuddy.models import EscalationPolicy, Incident, NotificationAttempt, NotificationChannel, NotificationStatus, Service, User
 from pagerbuddy.notifications import NotificationClient, SendResult, dispatch_notification
 from pagerbuddy.notifications import sms_body
@@ -15,6 +16,7 @@ class FakeNotificationClient:
         self.calls = []
         self.sms = []
         self.emails = []
+        self.cancellations = []
         self.fail_sms = fail_sms
 
     def send_phone_call(self, incident, user, attempt_id):
@@ -30,6 +32,10 @@ class FakeNotificationClient:
     def send_email(self, incident, user, step, ack_url=None, resolve_url=None):
         self.emails.append((incident.id, user.id, step, ack_url, resolve_url))
         return SendResult("email-sid")
+
+    def cancel_phone_call(self, provider_message_id):
+        self.cancellations.append(provider_message_id)
+        return SendResult(provider_message_id)
 
 
 def make_session():
@@ -68,6 +74,65 @@ def test_dispatch_notification_sends_all_user_configured_channels_for_attempt():
     persisted = db.scalars(select(NotificationAttempt).where(NotificationAttempt.incident_id == incident.id)).all()
     assert len(persisted) == 2
     assert all(attempt.status == NotificationStatus.delivered for attempt in persisted)
+
+
+def test_acknowledge_incident_cancels_in_flight_phone_calls():
+    db = make_session()
+    user = User(name="Responder", email="responder@example.com", phone_number="+15550000001")
+    service = make_service(db)
+    incident = Incident(service=service, service_id=None, title="Incident")
+    other_incident = Incident(service=service, service_id=None, title="Other incident")
+    db.add_all([user, service, incident, other_incident])
+    db.flush()
+    active_call = NotificationAttempt(
+        incident_id=incident.id,
+        user_id=user.id,
+        channel=NotificationChannel.phone_call,
+        status=NotificationStatus.delivered,
+        attempt_number=1,
+        escalation_step=0,
+        provider_message_id="CA123",
+    )
+    sms_attempt = NotificationAttempt(
+        incident_id=incident.id,
+        user_id=user.id,
+        channel=NotificationChannel.sms,
+        status=NotificationStatus.delivered,
+        attempt_number=1,
+        escalation_step=0,
+        provider_message_id="SM123",
+    )
+    failed_call = NotificationAttempt(
+        incident_id=incident.id,
+        user_id=user.id,
+        channel=NotificationChannel.phone_call,
+        status=NotificationStatus.failed,
+        attempt_number=2,
+        escalation_step=0,
+        provider_message_id="CA456",
+    )
+    other_call = NotificationAttempt(
+        incident_id=other_incident.id,
+        user_id=user.id,
+        channel=NotificationChannel.phone_call,
+        status=NotificationStatus.delivered,
+        attempt_number=1,
+        escalation_step=0,
+        provider_message_id="CA789",
+    )
+    db.add_all([active_call, sms_attempt, failed_call, other_call])
+    db.flush()
+
+    client = FakeNotificationClient()
+    acknowledge_incident(db, incident, user, "api", notification_client=client)
+    for attempt in (active_call, sms_attempt, failed_call, other_call):
+        db.refresh(attempt)
+
+    assert client.cancellations == ["CA123"]
+    assert active_call.status == NotificationStatus.acknowledged
+    assert sms_attempt.status == NotificationStatus.acknowledged
+    assert failed_call.status == NotificationStatus.failed
+    assert other_call.status == NotificationStatus.delivered
 
 
 def test_dispatch_notification_continues_other_channels_when_one_fails():
