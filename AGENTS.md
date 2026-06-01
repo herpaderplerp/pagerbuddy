@@ -18,6 +18,7 @@ PagerBuddy is a FastAPI service for Twilio-based on-call incident management.
 Use the existing virtualenv for local checks:
 
 ```bash
+.venv/bin/alembic upgrade head
 .venv/bin/pytest -q
 python3 -m compileall src tests
 PYTHONPATH=src .venv/bin/python -c "from pagerbuddy.main import app; print(app.title, len(app.routes))"
@@ -140,9 +141,19 @@ Ignored local artifacts include:
 - local database dumps such as `*.sql`, `*.dump`, `*.sqlite`, and `*.db`
 - `recordings/`
 
+## Database Migrations
+
+Schema changes are managed with Alembic:
+
+```bash
+PYTHONPATH=src .venv/bin/alembic upgrade head
+podman compose run --rm app alembic upgrade head
+```
+
+App, worker, and scheduler startup must not create or alter tables. For local disposable databases, reset the database first and then run `alembic upgrade head`.
+
 ## Implementation Notes
 
-- Database tables are currently created with `Base.metadata.create_all`; production should move to Alembic.
 - The worker processes escalation timers.
 - The scheduler checks schedule gaps and records/sends admin alerts.
 - Twilio webhooks are under `src/pagerbuddy/twilio_webhooks.py`.
@@ -156,13 +167,10 @@ Ignored local artifacts include:
 - Local transcription is in `src/pagerbuddy/transcription.py`.
 - Password hashing and RBAC dependencies are in `src/pagerbuddy/auth.py`.
 - Prefer disabling users over deleting referenced users. `/users/{user_id}/disable` preserves history, blocks login, and prevents the user from being paged by escalation. The API rejects disable requests while the user is still a direct escalation-policy contact or catchall.
-- `Base.metadata.create_all` is supplemented by a small compatibility schema check for user-management columns while the project does not yet use Alembic.
 - Admin dashboard JavaScript calls the same REST API and must keep using same-origin authenticated requests.
 - The dashboard is intended to be the primary management surface. When admin REST endpoints are added or changed, expose the action in `src/pagerbuddy/ui` as well.
 - Current dashboard management coverage includes create/list/update/delete for users, services, schedules, and escalation policies; stakeholder subscribe/unsubscribe; schedule gap checks; structured schedule layer editing with calendar preview; and incident create/update/escalation/acknowledge/resolve/reopen/reassign/merge/note/timeline actions.
 
 ## Current Gaps From Original Spec
 
-Known remaining work includes:
-
-- Alembic migrations.
+Track remaining backlog in `docs/planning-user-stories.md`.

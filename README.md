@@ -18,6 +18,20 @@ podman compose up --build
 
 The admin dashboard is available at `http://localhost:8000/dashboard`.
 
+Apply database migrations before starting services against a new or changed database:
+
+```bash
+PYTHONPATH=src alembic upgrade head
+```
+
+With Compose, rebuild the image and run migrations from the app container:
+
+```bash
+podman compose build app
+podman compose run --rm app alembic upgrade head
+podman compose up -d
+```
+
 The API listens on `http://localhost:8000`. Configure Twilio webhooks against:
 
 - Voice webhook: `POST /webhooks/twilio/voice`
@@ -68,5 +82,5 @@ Outbound responder calls play the Twilio-hosted recording media URL with `<Play>
 - All inbound calls create `P2` incidents unless an API caller sets another priority later.
 - One Twilio number maps to one service.
 - Recordings are streamed from Twilio by default unless local recording storage is enabled.
-- Database tables are created at app startup for the draft implementation. Replace this with Alembic before production use.
+- Database schema is managed by Alembic migrations. App, worker, and scheduler startup do not create or alter tables.
 - Compose waits for Postgres readiness before starting the app, worker, and scheduler. This matters on first boot with rootless Podman because database initialization can take a few seconds.

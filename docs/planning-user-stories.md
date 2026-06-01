@@ -108,19 +108,15 @@ PagerBuddy currently supports:
 
 ### Production Readiness
 
-1. Alembic migrations.
-   - Gap: Tables are created with `Base.metadata.create_all`, with a small compatibility check for user columns.
-   - Why it matters: Production upgrades need explicit, reversible schema migrations and data backfills.
-
-2. Outbound call cancellation hardening.
+1. Outbound call cancellation hardening.
    - Gap: Acknowledgement now cancels active Twilio phone-call attempts, but there is no dedicated cancellation status or dashboard visibility for cancellation outcomes.
    - Why it matters: Operators should be able to distinguish successfully canceled calls from calls that had already completed or could not be canceled.
 
-3. Deployment hardening.
+2. Deployment hardening.
    - Gap: Runtime is Docker/Podman friendly, but there is no documented production deployment pattern, backup/restore procedure, health/readiness split, or secret-management workflow.
    - Why it matters: Operators need a reliable path from local development to a durable hosted deployment.
 
-4. Observability.
+3. Observability.
    - Gap: There is basic logging and timeline/system events, but no metrics, tracing, structured log correlation, or admin-facing provider health view.
    - Why it matters: Incident-management software needs fast diagnosis when notifications, webhooks, SMTP, Twilio, transcription, or workers fail.
 
@@ -232,8 +228,8 @@ PagerBuddy currently supports:
 
 ## Suggested Planning Priorities
 
-1. Production foundation: Alembic migrations, outbound call cancellation, observability, and deployment documentation.
+1. Production foundation: observability, deployment documentation, and notification delivery hardening.
 2. Operator safety: audit log, notification attempt UI, incident filtering, and structured dashboard forms.
 3. Scheduling depth: guided policy/schedule editors, escalation simulation, and override lifecycle management.
 4. Integrations: Slack/Teams/webhooks, notification templates, and secure local recording playback.
-5. Compliance and scale: retention controls, session auth, stronger credential lifecycle, pagination, and reporting.
+5. Compliance and scale: retention controls, stronger credential lifecycle, pagination, and reporting.
