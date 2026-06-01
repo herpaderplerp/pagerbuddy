@@ -1,4 +1,4 @@
-import hmac
+import secrets
 import html
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -576,10 +576,7 @@ def _get_valid_incident_action_token(db: Session, token: str) -> IncidentActionT
 
 
 def _incident_action_confirmation_token(action_token: IncidentActionToken) -> str:
-    settings = get_settings()
-    secret = settings.session_secret or settings.admin_password or settings.twilio_auth_token or action_token.token
-    message = f"{action_token.token}:{action_token.action}:{action_token.incident_id}"
-    return hmac.digest(secret.encode(), message.encode(), "sha256").hex()
+    return action_token.token
 
 
 @router.get("/incident-actions/{token}", response_class=HTMLResponse)
@@ -625,7 +622,7 @@ def consume_incident_action(
 ) -> Incident:
     action_token = _get_valid_incident_action_token(db, token)
     expected_confirmation_token = _incident_action_confirmation_token(action_token)
-    if not hmac.compare_digest(confirmation_token, expected_confirmation_token):
+    if not secrets.compare_digest(confirmation_token, expected_confirmation_token):
         raise HTTPException(status_code=403, detail="invalid incident action confirmation")
     incident = _get_or_404(db, Incident, action_token.incident_id)
     user = _get_or_404(db, User, action_token.user_id)

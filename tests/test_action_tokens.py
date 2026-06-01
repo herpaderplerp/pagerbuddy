@@ -1,3 +1,4 @@
+import hmac
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
@@ -88,6 +89,27 @@ def test_action_token_expires_after_configured_ttl(monkeypatch):
         assert "expired" in str(exc.detail)
     else:
         raise AssertionError("old action token should expire")
+
+
+def test_confirmation_token_does_not_use_configured_secrets(monkeypatch):
+    monkeypatch.setattr(
+        "pagerbuddy.api.get_settings",
+        lambda: Settings(
+            admin_password="bootstrap-password",
+            session_secret="session-secret",
+            twilio_auth_token="twilio-secret",
+        ),
+    )
+    db = make_session()
+    incident, token = seed_action_token(db, token_value="public-action-token")
+
+    confirmation_token = _incident_action_confirmation_token(token)
+    known_message = f"{token.token}:{token.action}:{token.incident_id}"
+    config_secret_mac = hmac.digest(b"session-secret", known_message.encode(), "sha256").hex()
+
+    assert confirmation_token == "public-action-token"
+    assert confirmation_token != config_secret_mac
+    assert incident.id == token.incident_id
 
 
 def test_get_action_token_renders_confirmation_without_mutating_incident():
