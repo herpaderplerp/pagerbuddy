@@ -40,6 +40,8 @@ PUBLIC_PREFIXES = (
 PASSWORD_ALGORITHM = "pbkdf2_sha256"
 PASSWORD_ITERATIONS = 260_000
 SESSION_COOKIE_NAME = "pagerbuddy_session"
+# Last-resort process-local key keeps unsigned deployments from sharing a public fallback secret.
+_PROCESS_SESSION_SECRET = secrets.token_urlsafe(32)
 
 
 @dataclass(frozen=True)
@@ -122,7 +124,7 @@ def authenticate_basic(headers: Headers, settings: Settings, db: Session | None 
 
 
 def _session_secret(settings: Settings) -> str:
-    return settings.session_secret or settings.admin_password or settings.twilio_auth_token or "pagerbuddy-development-session-secret"
+    return settings.session_secret or settings.admin_password or settings.twilio_auth_token or _PROCESS_SESSION_SECRET
 
 
 def create_session_token(principal: Principal, settings: Settings, now: int | None = None) -> str:
