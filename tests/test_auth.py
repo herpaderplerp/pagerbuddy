@@ -64,6 +64,17 @@ def test_session_cookie_rejects_tampered_or_expired_token():
     assert SESSION_COOKIE_NAME == "pagerbuddy_session"
 
 
+def test_session_cookie_rejects_hardcoded_development_secret_forgery():
+    settings = Settings(admin_password="", session_secret="", twilio_auth_token="", session_ttl_seconds=60)
+    forged_payload = (
+        "eyJleHAiOjEwNjAsInJvbGUiOiJhZG1pbiIsInNvdXJjZSI6ImNvbmZpZyIsInVzZXJfaWQiOm51bGws"
+        "InVzZXJuYW1lIjoiYXR0YWNrZXJAZXhhbXBsZS5jb20ifQ=="
+    )
+    forged_signature = "6d758f9490edc4536ed047e011ad5d71e882d68ca626368e90dd44f0068117cb"
+
+    assert authenticate_session_cookie(f"{forged_payload}.{forged_signature}", settings, now=1010) is None
+
+
 def test_login_next_path_is_local_only():
     assert _safe_next_path("/dashboard") == "/dashboard"
     assert _safe_next_path("/docs") == "/docs"
