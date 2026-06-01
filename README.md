@@ -51,7 +51,7 @@ Database users can also authenticate with HTTP Basic using their email address a
 
 If `ADMIN_PASSWORD` is blank, the bootstrap admin account is disabled. At least one active database admin with a password is then required for admin access.
 
-Twilio webhooks, `/healthz`, dashboard static assets, and tokenized `/incident-actions/...` links stay public so external callbacks and emailed action links continue to work.
+Twilio webhooks, `/healthz`, dashboard static assets, and tokenized `/incident-actions/...` links stay public so external callbacks and emailed action links continue to work. Incident action links render a confirmation page on GET and require an explicit POST before acknowledging or resolving an incident.
 
 ## Notifications
 
@@ -59,7 +59,7 @@ Each user has configurable notification channels in `notification_preferences.ch
 
 SMS notifications include the incident ID. Responders can reply `ACK <incident ID>` or `RESOLVE <incident ID>` to disambiguate when more than one open incident is assigned or pending for them.
 
-Email action links expire after `INCIDENT_ACTION_TOKEN_TTL_SECONDS`, which defaults to 86400 seconds. Set it to `0` to disable time-based expiry; tokens still stop working once used or once the incident is closed.
+Email action links open a confirmation page and require an explicit confirmation before changing incident state, so automated email link scanners cannot acknowledge or resolve incidents with a simple GET. They expire after `INCIDENT_ACTION_TOKEN_TTL_SECONDS`, which defaults to 86400 seconds. Set it to `0` to disable time-based expiry; tokens still stop working once used or once the incident is closed.
 
 Disable referenced users instead of hard-deleting them. Disabled users cannot authenticate and are skipped by escalation, while historical incidents, notification attempts, and action tokens remain intact. Users cannot be disabled while they are still configured as a primary escalation-policy contact or catchall.
 
