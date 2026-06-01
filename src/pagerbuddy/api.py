@@ -1,12 +1,18 @@
+import hmac
+import html
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Form, HTTPException
+from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from pagerbuddy import incidents as incident_service
 from pagerbuddy import schemas
+from pagerbuddy.config import get_settings
 from pagerbuddy.database import get_db
 from pagerbuddy.escalation import start_escalation
 from pagerbuddy.models import (
@@ -339,8 +345,7 @@ def resolve_link(incident_id: uuid.UUID, user_id: uuid.UUID, db: Session = Depen
     return incident
 
 
-@router.get("/incident-actions/{token}", response_model=schemas.IncidentRead)
-def consume_incident_action(token: str, db: Session = Depends(get_db)) -> Incident:
+def _get_valid_incident_action_token(db: Session, token: str) -> IncidentActionToken:
     action_token = db.scalar(select(IncidentActionToken).where(IncidentActionToken.token == token))
     if action_token is None:
         raise HTTPException(status_code=404, detail="action token not found")
@@ -349,13 +354,57 @@ def consume_incident_action(token: str, db: Session = Depends(get_db)) -> Incide
     incident = _get_or_404(db, Incident, action_token.incident_id)
     if incident.status in {IncidentStatus.resolved, IncidentStatus.merged}:
         raise HTTPException(status_code=410, detail="action token expired because the incident is closed")
+    if action_token.action not in {"acknowledge", "resolve"}:
+        raise HTTPException(status_code=400, detail="unsupported token action")
+    return action_token
+
+
+def _incident_action_csrf_token(action_token: IncidentActionToken) -> str:
+    settings = get_settings()
+    secret = settings.admin_password or settings.twilio_auth_token or action_token.token
+    message = f"{action_token.token}:{action_token.action}:{action_token.incident_id}"
+    return hmac.digest(secret.encode(), message.encode(), "sha256").hex()
+
+
+@router.get("/incident-actions/{token}", response_class=HTMLResponse)
+def confirm_incident_action(token: str, db: Session = Depends(get_db)) -> HTMLResponse:
+    action_token = _get_valid_incident_action_token(db, token)
+    incident = _get_or_404(db, Incident, action_token.incident_id)
+    csrf_token = _incident_action_csrf_token(action_token)
+    action_label = "acknowledge" if action_token.action == "acknowledge" else "resolve"
+    page = f"""<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Confirm incident action</title></head>
+<body>
+  <h1>Confirm {html.escape(action_label)} incident</h1>
+  <p>Incident: {html.escape(str(incident.id))}</p>
+  <p>Title: {html.escape(incident.title)}</p>
+  <p>Status: {html.escape(incident.status.value)}</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{html.escape(csrf_token)}">
+    <button type="submit">Confirm {html.escape(action_label)}</button>
+  </form>
+</body>
+</html>"""
+    return HTMLResponse(page)
+
+
+@router.post("/incident-actions/{token}", response_model=schemas.IncidentRead)
+def consume_incident_action(
+    token: str,
+    csrf_token: Annotated[str, Form()],
+    db: Session = Depends(get_db),
+) -> Incident:
+    action_token = _get_valid_incident_action_token(db, token)
+    expected_csrf_token = _incident_action_csrf_token(action_token)
+    if not hmac.compare_digest(csrf_token, expected_csrf_token):
+        raise HTTPException(status_code=403, detail="invalid incident action confirmation")
+    incident = _get_or_404(db, Incident, action_token.incident_id)
     user = _get_or_404(db, User, action_token.user_id)
     if action_token.action == "acknowledge":
         incident_service.acknowledge_incident(db, incident, user, "email")
     elif action_token.action == "resolve":
         incident_service.resolve_incident(db, incident, user, "email")
-    else:
-        raise HTTPException(status_code=400, detail="unsupported token action")
     from pagerbuddy.models import utcnow
 
     action_token.used_at = utcnow()
