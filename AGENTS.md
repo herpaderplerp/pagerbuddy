@@ -162,7 +162,7 @@ App, worker, and scheduler startup must not create or alter tables. For local di
 - Acknowledging an incident cancels in-flight Twilio outbound phone calls before marking active notification attempts as acknowledged.
 - User notification preferences use `notification_preferences.channels`; every configured channel is sent for each escalation attempt rather than rotating one channel per retry.
 - SMS notifications include incident IDs; inbound SMS accepts `ACK <incident ID>` and `RESOLVE <incident ID>` to disambiguate open incidents for the responder.
-- Email action links expire after `INCIDENT_ACTION_TOKEN_TTL_SECONDS` unless set to `0`; used tokens and closed-incident tokens are still rejected.
+- Email action links render a confirmation page on GET and require POST confirmation before mutating incidents. They expire after `INCIDENT_ACTION_TOKEN_TTL_SECONDS` unless set to `0`; used tokens and closed-incident tokens are still rejected.
 - Recording downloads are in `src/pagerbuddy/recordings.py`.
 - Local transcription is in `src/pagerbuddy/transcription.py`.
 - Password hashing and RBAC dependencies are in `src/pagerbuddy/auth.py`.
