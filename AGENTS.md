@@ -166,7 +166,7 @@ App, worker, and scheduler startup must not create or alter tables. For local di
 - Recording downloads are in `src/pagerbuddy/recordings.py`.
 - Local transcription is in `src/pagerbuddy/transcription.py`.
 - Password hashing and RBAC dependencies are in `src/pagerbuddy/auth.py`.
-- Prefer disabling users over deleting referenced users. `/users/{user_id}/disable` preserves history, blocks login, and prevents the user from being paged by escalation. The API rejects disable requests while the user is still a direct escalation-policy contact or catchall.
+- Prefer disabling users over deleting referenced users. `/users/{user_id}/disable` preserves history, blocks login, and prevents the user from being paged by escalation. The API rejects disable requests while the user is still a direct escalation-policy contact, catchall, or schedule assignment/override.
 - Admin dashboard JavaScript calls the same REST API and must keep using same-origin authenticated requests.
 - The dashboard is intended to be the primary management surface. When admin REST endpoints are added or changed, expose the action in `src/pagerbuddy/ui` as well.
 - Current dashboard management coverage includes create/list/update/delete for users, services, schedules, and escalation policies; stakeholder subscribe/unsubscribe; schedule gap checks; structured schedule layer editing with calendar preview; and incident create/update/escalation/acknowledge/resolve/reopen/reassign/merge/note/timeline actions.

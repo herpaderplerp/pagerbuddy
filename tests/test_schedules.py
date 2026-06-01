@@ -2,9 +2,18 @@ from datetime import datetime
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-from pagerbuddy.models import Schedule
+from pagerbuddy.database import Base
+from pagerbuddy.models import Schedule, User
 from pagerbuddy.schedules import add_override, detect_schedule_gaps, resolve_on_call_user
+
+
+def make_session():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
 
 
 class DummyDb:
@@ -83,3 +92,29 @@ def test_gap_detection_reports_uncovered_windows():
     assert gaps[0].start.isoformat() == "2026-05-26T00:00:00+00:00"
     assert gaps[0].end.isoformat() == "2026-05-27T00:00:00+00:00"
 
+
+def test_gap_detection_treats_inactive_scheduled_user_as_uncovered():
+    db = make_session()
+    user = User(name="Inactive", email="inactive@example.com", phone_number="+15550000007", is_active=False)
+    db.add(user)
+    db.flush()
+    schedule = Schedule(
+        name="Primary",
+        timezone="UTC",
+        layers=[{"users": [str(user.id)], "rotation_type": "daily", "starts_at": "2026-05-26T00:00:00+00:00"}],
+        overrides=[],
+    )
+    db.add(schedule)
+    db.commit()
+
+    gaps = detect_schedule_gaps(
+        schedule,
+        start=datetime.fromisoformat("2026-05-26T00:00:00+00:00"),
+        days=1,
+        step_minutes=60,
+        db=db,
+    )
+
+    assert len(gaps) == 1
+    assert gaps[0].start.isoformat() == "2026-05-26T00:00:00+00:00"
+    assert gaps[0].end.isoformat() == "2026-05-27T00:00:00+00:00"

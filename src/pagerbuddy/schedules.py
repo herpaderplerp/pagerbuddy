@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
-from pagerbuddy.models import Schedule, TimelineEventType
+from pagerbuddy.models import Schedule, TimelineEventType, User
 from pagerbuddy.timeline import record_event
 
 
@@ -135,11 +135,22 @@ def add_override(db: Session, schedule: Schedule, override: dict[str, Any]) -> S
     return schedule
 
 
+def _has_active_coverage(db: Session | None, schedule: Schedule, at: datetime) -> bool:
+    user_id = resolve_on_call_user(schedule, at)
+    if user_id is None:
+        return False
+    if db is None:
+        return True
+    user = db.get(User, user_id)
+    return bool(user and user.is_active)
+
+
 def detect_schedule_gaps(
     schedule: Schedule,
     start: datetime | None = None,
     days: int = 30,
     step_minutes: int = 60,
+    db: Session | None = None,
 ) -> list[CoverageGap]:
     tz = ZoneInfo(schedule.timezone)
     cursor = (start or datetime.now(timezone.utc)).astimezone(tz)
@@ -149,7 +160,7 @@ def detect_schedule_gaps(
     active_gap_start: datetime | None = None
 
     while cursor < end:
-        has_coverage = resolve_on_call_user(schedule, cursor) is not None
+        has_coverage = _has_active_coverage(db, schedule, cursor)
         if not has_coverage and active_gap_start is None:
             active_gap_start = cursor
         elif has_coverage and active_gap_start is not None:
