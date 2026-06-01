@@ -512,7 +512,12 @@ def acknowledge_incident(
 
 
 @router.get("/incidents/{incident_id}/acknowledge-link", response_model=schemas.IncidentRead)
-def acknowledge_link(incident_id: uuid.UUID, user_id: uuid.UUID, db: Session = Depends(get_db)) -> Incident:
+def acknowledge_link(
+    incident_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(RESPONDER_OPERATION),
+) -> Incident:
     incident = _get_or_404(db, Incident, incident_id)
     user = _get_or_404(db, User, user_id)
     incident_service.acknowledge_incident(db, incident, user, "email")
@@ -537,7 +542,12 @@ def resolve_incident(
 
 
 @router.get("/incidents/{incident_id}/resolve-link", response_model=schemas.IncidentRead)
-def resolve_link(incident_id: uuid.UUID, user_id: uuid.UUID, db: Session = Depends(get_db)) -> Incident:
+def resolve_link(
+    incident_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(RESPONDER_OPERATION),
+) -> Incident:
     incident = _get_or_404(db, Incident, incident_id)
     user = _get_or_404(db, User, user_id)
     incident_service.resolve_incident(db, incident, user, "email")

@@ -10,7 +10,7 @@ from pagerbuddy.api import router
 from pagerbuddy.auth import hash_password
 from pagerbuddy.config import Settings, get_settings
 from pagerbuddy.database import Base, get_db
-from pagerbuddy.models import User, UserRole
+from pagerbuddy.models import EscalationPolicy, Incident, Service, User, UserRole
 
 
 def basic(username: str, password: str) -> dict[str, str]:
@@ -91,3 +91,46 @@ def test_inactive_database_user_cannot_authenticate():
     response = client.get("/auth/me", headers=basic("disabled@example.com", "disabled-secret"))
 
     assert response.status_code == 401
+
+
+def test_stakeholder_cannot_use_incident_mutation_link_routes():
+    client, db = make_client()
+    stakeholder = User(
+        name="Stakeholder",
+        email="stakeholder@example.com",
+        phone_number="+15550000003",
+        role=UserRole.stakeholder,
+        password_hash=hash_password("stakeholder-secret"),
+    )
+    responder = User(
+        name="Responder",
+        email="responder-link@example.com",
+        phone_number="+15550000004",
+        role=UserRole.responder,
+        password_hash=hash_password("responder-secret"),
+    )
+    policy = EscalationPolicy(name="Production", steps=[])
+    db.add_all([stakeholder, responder, policy])
+    db.flush()
+    service = Service(name="API", escalation_policy_id=policy.id, inbound_phone_number="+15551112222")
+    db.add(service)
+    db.flush()
+    ack_incident = Incident(service_id=service.id, title="Ack incident")
+    resolve_incident = Incident(service_id=service.id, title="Resolve incident")
+    db.add_all([ack_incident, resolve_incident])
+    db.commit()
+
+    headers = basic("stakeholder@example.com", "stakeholder-secret")
+    ack_response = client.get(
+        f"/incidents/{ack_incident.id}/acknowledge-link?user_id={responder.id}",
+        headers=headers,
+    )
+    resolve_response = client.get(
+        f"/incidents/{resolve_incident.id}/resolve-link?user_id={responder.id}",
+        headers=headers,
+    )
+
+    assert ack_response.status_code == 403
+    assert resolve_response.status_code == 403
+    assert ack_incident.acknowledged_at is None
+    assert resolve_incident.resolved_at is None
